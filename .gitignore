@@ -1,0 +1,21 @@
+# Claude Code
+.claude/
+
+# Datasets (real and synthetic)
+dataset/
+Noise/
+v_*/
+dataset_*/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Training outputs
+output/
+
+# Reports
+leak_reports/
+*_full_analysis/
+*_Noise_Analysis.pdf

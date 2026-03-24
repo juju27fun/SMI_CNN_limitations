@@ -1,0 +1,15 @@
+--index-url https://download.pytorch.org/whl/cu130
+torch
+torchvision
+
+--index-url https://pypi.org/simple/
+torchsummary
+scikit-learn
+matplotlib
+numpy
+argparse
+ipykernel
+seaborn
+streamlit
+scipy
+tqdm
