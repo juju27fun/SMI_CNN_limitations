@@ -1,12 +1,12 @@
 """
 generate_dataset.py
 -------------------
-Génère un dataset CNN pour la classification de particules OFI (2 µm, 4 µm, 10 µm).
+Generate a CNN dataset for OFI particle classification (2 um, 4 um, 10 um).
 
 Modes:
-    auto    Paramètres par défaut, dataset complet (1511 fichiers)
-    test    3 signaux par classe dans un dossier plat (pour inspection visuelle)
-    manual  Paramètres personnalisés depuis un fichier .ini
+    auto    Default parameters, full dataset (1511 files)
+    test    3 signals per class in a flat folder (for visual inspection)
+    manual  Custom parameters from a .ini file
 
 Usage:
     python generate_dataset.py auto [--output ./dataset] [--force]
@@ -31,8 +31,8 @@ from tqdm import tqdm
 
 
 # ---------------------------------------------------------------------------
-# Copie inline de simulated_particle() — NE PAS importer Simulated_Particle.py
-# (le code module-level appelle plt.show() qui bloquerait l'exécution)
+# Inline copy of simulated_particle() — DO NOT import Simulated_Particle.py
+# (module-level code calls plt.show() which would block execution)
 # ---------------------------------------------------------------------------
 def simulated_particle(P_size, P_Speed, Inc_Angle, Laser_Lambda, Po, T_impact,
                        S_l, Time_max, Adq_Freq, m0):
@@ -76,7 +76,7 @@ def simulated_particle(P_size, P_Speed, Inc_Angle, Laser_Lambda, Po, T_impact,
 
 
 # ---------------------------------------------------------------------------
-# Filtre passe-bande (reproduit le traitement réel du Bokeh viewer)
+# Bandpass filter (reproduces the real Bokeh viewer processing)
 # ---------------------------------------------------------------------------
 def bandpass_filter(data, lowcut, highcut, order, fs):
     b, a = butter(order, [lowcut, highcut], btype='band', fs=fs)
@@ -84,23 +84,23 @@ def bandpass_filter(data, lowcut, highcut, order, fs):
 
 
 # ---------------------------------------------------------------------------
-# Chargement des fichiers de bruit réel
+# Loading real noise files
 # ---------------------------------------------------------------------------
 def load_noise_files(noise_dir):
     """Pre-load all .npy noise files from directory. Returns list of np arrays."""
     paths = sorted(glob_mod.glob(os.path.join(noise_dir, "*.npy")))
     if not paths:
         raise FileNotFoundError(
-            f"Aucun fichier .npy trouvé dans '{noise_dir}'. "
-            "Vérifiez le chemin ou utilisez --noise generated."
+            f"No .npy files found in '{noise_dir}'. "
+            "Check the path or use --noise generated."
         )
     noise_arrays = [np.load(p) for p in paths]
-    print(f"Bruit réel : {len(noise_arrays)} fichiers chargés depuis '{noise_dir}'")
+    print(f"Real noise: {len(noise_arrays)} files loaded from '{noise_dir}'")
     return noise_arrays
 
 
 # ---------------------------------------------------------------------------
-# Génération de bruit coloré synthétique
+# Synthetic colored noise generation
 # ---------------------------------------------------------------------------
 def generate_colored_noise(n_samples, rng, sigma, fs):
     """Generate colored noise with shaped PSD (70% power 1–10 kHz, 30% 10–80 kHz)."""
@@ -116,7 +116,7 @@ def generate_colored_noise(n_samples, rng, sigma, fs):
 
 
 # ---------------------------------------------------------------------------
-# Fabrication du bruit (dispatch type + variabilité)
+# Noise generation (dispatch by type + variability)
 # ---------------------------------------------------------------------------
 def _get_real_noise(noise_files, rng, n_samples, sigma):
     """Extract a random segment from real noise files and scale to sigma."""
@@ -147,36 +147,36 @@ def _make_noise(sim, rng, noise_files):
 
 
 # ---------------------------------------------------------------------------
-# Paramètres par défaut
+# Default parameters
 # ---------------------------------------------------------------------------
 DEFAULT_SIM = {
-    # Simulation physique
+    # Physics simulation
     "laser_lambda":           1550e-9,
     "adq_freq":               2_000_000,
     "inc_angle":              80.0,
     "po":                     0.004134 * 4,
     "time_max":               2500,
     "s_l":                    7e-6,
-    # Randomisation par sample
+    # Per-sample randomization
     "p_speed_min":            0.05,
     "p_speed_max":            0.20,
     "t_impact_factor_min":    0.4,
     "t_impact_factor_max":    0.6,
-    # Post-traitements
+    # Post-processing
     "filter_lowcut":          7000,
     "filter_highcut":         80000,
     "filter_order":           4,
-    # Bruit (contrôlés par --noise, surchargeables via .ini [noise])
+    # Noise (controlled by --noise, overridable via .ini [noise])
     "noise_type":             "none",
     "noise_injection":        "after",
     "noise_sigma":            0.0,
     "noise_variability":      0.0,
-    # Signal (contrôlés par --signal, surchargeables via .ini [signal])
+    # Signal (controlled by --signal, overridable via .ini [signal])
     "dc_offset_std":          0.15,
     "multiburst_pct":         10,
     "envelope_skew_min":      -0.5,
     "envelope_skew_max":      0.5,
-    # Reproductibilité
+    # Reproducibility
     "seed":                   42,
 }
 
@@ -210,67 +210,67 @@ DEFAULT_CLASSES = [
 ]
 
 TEMPLATE_CONFIG = """\
-# Configuration pour generate_dataset.py (mode manual)
-# Tous les paramètres sont optionnels : les valeurs absentes prennent la valeur par défaut.
+# Configuration for generate_dataset.py (manual mode)
+# All parameters are optional: missing values use defaults.
 
 [simulation]
-# Longueur d'onde du laser [m]
+# Laser wavelength [m]
 laser_lambda = 1550e-9
-# Fréquence d'acquisition [Hz]
+# Acquisition frequency [Hz]
 adq_freq = 2000000
-# Angle d'incidence [degrés]
+# Incidence angle [degrees]
 inc_angle = 80.0
-# Puissance laser [mV]  (Po = 0.004134 * 4)
+# Laser power [mV]  (Po = 0.004134 * 4)
 po = 0.016536
-# Nombre d'échantillons par signal
+# Number of samples per signal
 time_max = 2500
-# Diamètre du spot laser [m]
+# Laser spot diameter [m]
 s_l = 7e-6
-# Graine pour la reproductibilité
+# Seed for reproducibility
 seed = 42
 
 [randomization]
-# Vitesse de la particule [m/s]  — tirée uniformément dans [min, max]
-# Contrainte : f_D = 2*V*sin(10°)/lambda doit rester > 7000 Hz (coupure basse du filtre)
-# À 0.05 m/s → f_D ≈ 11.2 kHz  (minimum recommandé)
+# Particle speed [m/s] — drawn uniformly from [min, max]
+# Constraint: f_D = 2*V*sin(10)/lambda must stay > 7000 Hz (filter low cutoff)
+# At 0.05 m/s: f_D ~ 11.2 kHz (recommended minimum)
 p_speed_min = 0.05
 p_speed_max = 0.20
-# Position du centre de la particule dans la fenêtre temporelle (fraction de window)
+# Particle center position in the time window (fraction of window)
 t_impact_factor_min = 0.4
 t_impact_factor_max = 0.6
 
 [postprocessing]
-# Filtre passe-bande Butterworth (ordre, fréquences de coupure en Hz)
+# Butterworth bandpass filter (order, cutoff frequencies in Hz)
 filter_lowcut  = 7000
 filter_highcut = 80000
 filter_order   = 4
 
 [noise]
-# Type de bruit : none, white, colored, real
+# Noise type: none, white, colored, real
 noise_type = colored
-# Point d'injection : before (avant filtre) ou after (après filtre)
+# Injection point: before (before filter) or after (after filter)
 noise_injection = after
-# Écart-type du bruit (calibré sur données réelles)
+# Noise standard deviation (calibrated on real data)
 noise_sigma = 0.058
-# Variabilité d'amplitude inter-samples (CV, 0 = fixe, 0.19 = réaliste)
+# Inter-sample amplitude variability (CV, 0 = fixed, 0.19 = realistic)
 noise_variability = 0.0
 
 [signal]
-# Paramètres du signal (contrôlés par --signal preset, surchargeables ici)
-# Offset DC aléatoire (σ en mV, 0 pour désactiver)
+# Signal parameters (controlled by --signal preset, overridable here)
+# Random DC offset (sigma in mV, 0 to disable)
 dc_offset_std = 0.15
-# Pourcentage de signaux avec un second burst (0 pour désactiver)
+# Percentage of signals with a second burst (0 to disable)
 multiburst_pct = 10
-# Plage d'asymétrie de l'enveloppe gaussienne (0 0 pour symétrique)
+# Gaussian envelope asymmetry range (0 0 for symmetric)
 envelope_skew_min = -0.5
 envelope_skew_max = 0.5
 
-# Une section [class_NOM] par classe à générer.
-# p_size  : diamètre de la particule [m]
-# train   : nombre de samples d'entraînement
-# test    : nombre de samples de test
-# m0_min  : indice de modulation minimum (plus grand pour les grosses particules)
-# m0_max  : indice de modulation maximum
+# One [class_NAME] section per class to generate.
+# p_size  : particle diameter [m]
+# train   : number of training samples
+# test    : number of test samples
+# m0_min  : minimum modulation index (higher for larger particles)
+# m0_max  : maximum modulation index
 
 [class_2um]
 p_size = 2e-6
@@ -296,7 +296,7 @@ m0_max = 95.0
 
 
 # ---------------------------------------------------------------------------
-# Lecture du fichier de configuration .ini
+# Load .ini configuration file
 # ---------------------------------------------------------------------------
 def load_config_file(path, base_sim=None):
     cfg = configparser.ConfigParser()
@@ -328,7 +328,7 @@ def load_config_file(path, base_sim=None):
                 sim[key] = float(p[key])
         if "filter_order" in p:
             sim["filter_order"] = int(float(p["filter_order"]))
-        # Rétro-compat : noise_sigma et dc_offset_std dans [postprocessing]
+        # Backward compat: noise_sigma and dc_offset_std in [postprocessing]
         if "noise_sigma" in p:
             sim["noise_sigma"] = float(p["noise_sigma"])
         if "dc_offset_std" in p:
@@ -375,13 +375,13 @@ def load_config_file(path, base_sim=None):
 
 
 # ---------------------------------------------------------------------------
-# Génération d'un sample (paramétrisée)
+# Sample generation (parameterized)
 # ---------------------------------------------------------------------------
 def generate_sample(p_size, rng, sim, m0_min, m0_max, noise_files=None):
     """
-    Retourne (signal, params) :
+    Returns (signal, params):
       signal : np.ndarray float64 shape (time_max,)
-      params : dict avec les valeurs tirées aléatoirement (pour le log en mode test)
+      params : dict with randomly drawn values (for logging in test mode)
     """
     window   = sim["time_max"] / sim["adq_freq"]
     p_speed  = rng.uniform(sim["p_speed_min"],         sim["p_speed_max"])
@@ -398,7 +398,7 @@ def generate_sample(p_size, rng, sim, m0_min, m0_max, noise_files=None):
     with contextlib.redirect_stdout(io.StringIO()):
         P_t, _ = simulated_particle(T_impact=t_impact, m0=m0, **_sim_args)
 
-    # --- Multiburst (avant DC subtraction) ---
+    # --- Multiburst (before DC subtraction) ---
     is_multiburst = False
     if sim["multiburst_pct"] > 0 and rng.random() < sim["multiburst_pct"] / 100:
         is_multiburst = True
@@ -420,7 +420,7 @@ def generate_sample(p_size, rng, sim, m0_min, m0_max, noise_files=None):
                 )
             P_t = P_t + P_t2
 
-    # --- Envelope skew (avant DC subtraction) ---
+    # --- Envelope skew (before DC subtraction) ---
     skew = rng.uniform(sim["envelope_skew_min"], sim["envelope_skew_max"])
     if skew != 0:
         t = np.linspace(0, window, sim["time_max"])
@@ -432,20 +432,22 @@ def generate_sample(p_size, rng, sim, m0_min, m0_max, noise_files=None):
     # --- DC subtraction ---
     P_t = P_t - np.mean(P_t)
 
-    # --- Bruit AVANT bandpass (injection=before) ---
+    # --- Noise BEFORE bandpass (injection=before) ---
     noise = _make_noise(sim, rng, noise_files)
     if noise is not None and sim["noise_injection"] == "before":
         P_t = P_t + noise
 
-    # --- Bandpass ---
-    P_t = bandpass_filter(P_t, sim["filter_lowcut"], sim["filter_highcut"],
-                          sim["filter_order"], sim["adq_freq"])
+    # --- Bandpass (disabled by default — F2 at training time is sufficient) ---
+    # Re-enable with --with-filter if needed.
+    if sim.get("apply_generation_filter", False):
+        P_t = bandpass_filter(P_t, sim["filter_lowcut"], sim["filter_highcut"],
+                              sim["filter_order"], sim["adq_freq"])
 
-    # --- Bruit APRÈS bandpass (injection=after) ---
+    # --- Noise AFTER bandpass (injection=after) ---
     if noise is not None and sim["noise_injection"] == "after":
         P_t = P_t + noise
 
-    # --- DC offset (contrôlé par --signal, indépendant du bruit) ---
+    # --- DC offset (controlled by --signal, independent of noise) ---
     dc_offset = 0.0
     if sim["dc_offset_std"] > 0:
         dc_offset = rng.normal(0, sim["dc_offset_std"])
@@ -459,7 +461,7 @@ def generate_sample(p_size, rng, sim, m0_min, m0_max, noise_files=None):
 
 
 # ---------------------------------------------------------------------------
-# Ajout automatique du dataset au .gitignore
+# Auto-add dataset directory to .gitignore
 # ---------------------------------------------------------------------------
 def _add_to_gitignore(output_dir):
     """Add output_dir to .gitignore (create the file if it doesn't exist)."""
@@ -478,11 +480,11 @@ def _add_to_gitignore(output_dir):
     else:
         with open(gitignore_path, "w") as f:
             f.write(entry + "\n")
-    print(f".gitignore : ajouté '{entry}'")
+    print(f".gitignore: added '{entry}'")
 
 
 # ---------------------------------------------------------------------------
-# Moteur de génération commun aux 3 modes
+# Generation engine shared by all 3 modes
 # ---------------------------------------------------------------------------
 def run_generation(classes, sim, output_dir, force, test_mode=False,
                    noise_dir="./Noise"):
@@ -491,20 +493,20 @@ def run_generation(classes, sim, output_dir, force, test_mode=False,
             shutil.rmtree(output_dir)
         else:
             raise FileExistsError(
-                f"Le dossier '{output_dir}' existe déjà. "
-                "Utilisez --force pour l'écraser."
+                f"Directory '{output_dir}' already exists. "
+                "Use --force to overwrite."
             )
 
     np.random.seed(sim["seed"])
     rng   = np.random.default_rng(sim["seed"])
     total = 0
 
-    # Chargement des fichiers de bruit réel si nécessaire
+    # Load real noise files if needed
     noise_files = None
     if sim["noise_type"] == "real":
         noise_files = load_noise_files(noise_dir)
 
-    # Fallback: si m0 n'est pas défini par classe, utiliser la valeur globale
+    # Fallback: if m0 is not defined per class, use the global value
     for cls in classes:
         if "m0_min" not in cls:
             cls["m0_min"] = sim.get("m0_min", 8.0)
@@ -512,7 +514,7 @@ def run_generation(classes, sim, output_dir, force, test_mode=False,
             cls["m0_max"] = sim.get("m0_max", 14.0)
 
     if test_mode:
-        # --- mode test : 3 signaux par classe, dossier plat ---
+        # --- test mode: 3 signals per class, flat folder ---
         for cls in classes:
             folder = os.path.join(output_dir, cls["name"])
             os.makedirs(folder, exist_ok=True)
@@ -537,10 +539,10 @@ def run_generation(classes, sim, output_dir, force, test_mode=False,
                 )
                 total += 1
 
-        print(f"\nTotal : {total} fichiers dans '{output_dir}'")
+        print(f"\nTotal: {total} files in '{output_dir}'")
 
     else:
-        # --- modes auto / manual : dataset complet avec split train/test ---
+        # --- auto / manual modes: full dataset with train/test split ---
         for cls in classes:
             for split, n_samples in [("train", cls["train"]), ("test", cls["test"])]:
                 folder = os.path.join(output_dir, split, cls["name"])
@@ -557,7 +559,7 @@ def run_generation(classes, sim, output_dir, force, test_mode=False,
 
         for cls in classes:
             print(f"[{cls['name']:4s}]  train={cls['train']}  test={cls['test']}")
-        print(f"Total : {total} fichiers générés dans '{output_dir}'")
+        print(f"Total: {total} files generated in '{output_dir}'")
 
     _add_to_gitignore(output_dir)
 
@@ -567,10 +569,10 @@ def run_generation(classes, sim, output_dir, force, test_mode=False,
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Génère un dataset CNN de signaux OFI simulés.",
+        description="Generate a CNN dataset of simulated OFI signals.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Exemples:\n"
+            "Examples:\n"
             "  python generate_dataset.py auto\n"
             "  python generate_dataset.py test --output ./preview\n"
             "  python generate_dataset.py manual --init-config params.ini\n"
@@ -580,58 +582,66 @@ def main():
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     def add_common_args(sub):
-        sub.add_argument("--output", default="./dataset", help="Dossier de sortie")
+        sub.add_argument("--output", default="./dataset", help="Output directory")
         sub.add_argument("--force", action="store_true",
-                         help="Écrase le dossier de sortie s'il existe déjà")
+                         help="Overwrite output directory if it already exists")
         sub.add_argument("--signal", choices=["pure", "realistic"], default="realistic",
-                         help="Preset signal : 'pure' ou 'realistic' (défaut)")
+                         help="Signal preset: 'pure' or 'realistic' (default)")
         sub.add_argument("--noise", choices=["none", "white", "colored", "realistic", "real"],
                          default="none",
-                         help="Preset bruit : none (défaut), white, colored, realistic, real")
+                         help="Noise preset: none (default), white, colored, realistic, real")
         sub.add_argument("--noise-dir", default="./Noise", metavar="DIR",
-                         help="Dossier des fichiers de bruit réel (pour --noise real)")
+                         help="Directory containing real noise files (for --noise real)")
+        sub.add_argument("--with-filter", action="store_true",
+                         help="Apply the generation bandpass filter during data generation")
+        sub.add_argument("--filter-lowcut", type=float, default=None, metavar="HZ",
+                         help="Low cutoff frequency in Hz (default: 7000)")
+        sub.add_argument("--filter-highcut", type=float, default=None, metavar="HZ",
+                         help="High cutoff frequency in Hz (default: 80000)")
+        sub.add_argument("--filter-order", type=int, default=None, metavar="N",
+                         help="Butterworth filter order (default: 4)")
         sub.add_argument("--config", metavar="FILE",
-                         help="Fichier .ini pour surcharger les paramètres par défaut")
+                         help=".ini file to override default parameters")
         sub.add_argument("--init-config", metavar="FILE",
-                         help="Génère un fichier de config template et quitte")
+                         help="Generate a config template file and exit")
 
     # --- auto ---
     p_auto = subparsers.add_parser(
-        "auto", help="Dataset complet avec les paramètres par défaut (1511 fichiers)"
+        "auto", help="Full dataset with default parameters (1511 files)"
     )
     add_common_args(p_auto)
     p_auto.set_defaults(output="./dataset")
 
     # --- test ---
     p_test = subparsers.add_parser(
-        "test", help="3 signaux par classe pour inspection visuelle rapide"
+        "test", help="3 signals per class for quick visual inspection"
     )
     add_common_args(p_test)
     p_test.set_defaults(output="./dataset_test")
 
     # --- manual ---
     p_manual = subparsers.add_parser(
-        "manual", help="Paramètres personnalisés depuis un fichier .ini"
+        "manual", help="Custom parameters from a .ini file"
     )
     add_common_args(p_manual)
 
     args = parser.parse_args()
 
-    # Cas spécial : génération du template de config (disponible dans tous les modes)
+    # Special case: generate config template (available in all modes)
     if args.init_config:
         with open(args.init_config, "w") as f:
             f.write(TEMPLATE_CONFIG)
-        print(f"Template de configuration écrit dans '{args.init_config}'")
+        print(f"Config template written to '{args.init_config}'")
         return
 
-    # En mode manual, --config est obligatoire
+    # In manual mode, --config is required
     if args.mode == "manual" and not args.config:
         parser.error(
-            "--config est requis en mode manual "
-            "(ou utilisez --init-config FILE pour créer un template)"
+            "--config is required in manual mode "
+            "(or use --init-config FILE to create a template)"
         )
 
-    # Résolution : DEFAULT_SIM → preset signal → preset noise → config .ini (gagne)
+    # Resolution order: DEFAULT_SIM -> signal preset -> noise preset -> .ini config (wins)
     base_sim = dict(DEFAULT_SIM)
     base_sim.update(SIGNAL_PRESETS[args.signal])
     base_sim.update(NOISE_PRESETS[args.noise])
@@ -640,6 +650,48 @@ def main():
         sim, classes = load_config_file(args.config, base_sim=base_sim)
     else:
         sim, classes = base_sim, list(DEFAULT_CLASSES)
+
+    # --with-filter re-enables the generation bandpass (disabled by default)
+    # Passing any --filter-* param also implies --with-filter
+    # noise_injection == "before" also implies --with-filter (noise was calibrated
+    # assuming the filter attenuates it — without filtering the noise is ~3× too loud)
+    filter_param_given = any(v is not None for v in
+                            [args.filter_lowcut, args.filter_highcut, args.filter_order])
+    before_injection = sim.get("noise_injection") == "before" and sim.get("noise_sigma", 0) > 0
+    if args.with_filter or filter_param_given or before_injection:
+        sim["apply_generation_filter"] = True
+    if before_injection and not args.with_filter and not filter_param_given:
+        # Use wider passband (5–100 kHz) that matches the training-time F2 filter
+        sim.setdefault("_filter_auto_enabled", True)
+        sim["filter_lowcut"] = 5000
+        sim["filter_highcut"] = 100000
+    if args.filter_lowcut is not None:
+        sim["filter_lowcut"] = args.filter_lowcut
+    if args.filter_highcut is not None:
+        sim["filter_highcut"] = args.filter_highcut
+    if args.filter_order is not None:
+        sim["filter_order"] = args.filter_order
+
+    # Validate filter parameters
+    if sim.get("apply_generation_filter", False):
+        nyquist = sim["adq_freq"] / 2
+        if sim["filter_lowcut"] >= sim["filter_highcut"]:
+            parser.error(
+                f"filter_lowcut ({sim['filter_lowcut']:.0f} Hz) must be less than "
+                f"filter_highcut ({sim['filter_highcut']:.0f} Hz)"
+            )
+        if sim["filter_highcut"] >= nyquist:
+            parser.error(
+                f"filter_highcut ({sim['filter_highcut']:.0f} Hz) must be below "
+                f"Nyquist frequency ({nyquist:.0f} Hz = adq_freq/2)"
+            )
+        if sim["filter_lowcut"] <= 0:
+            parser.error("filter_lowcut must be positive")
+
+    if sim.get("_filter_auto_enabled"):
+        print(f"Note: bandpass filter auto-enabled ({sim['filter_lowcut']:.0f}–"
+              f"{sim['filter_highcut']:.0f} Hz) because noise_injection='before'. "
+              "Override with --filter-lowcut / --filter-highcut.")
 
     test_mode = args.mode == "test"
     run_generation(classes, sim, args.output, args.force, test_mode=test_mode,

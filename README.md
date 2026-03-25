@@ -33,6 +33,10 @@ python benchmark.py --data-dir dataset --real-test-dir dataset_real/test
 # Custom hyperparameters and early stopping
 python benchmark.py --data-dir dataset --epochs 200 --lr 1e-3 --patience 20
 
+# Disable LR scheduler (constant LR) or use plateau scheduler
+python benchmark.py --data-dir dataset --scheduler none
+python benchmark.py --data-dir dataset --scheduler plateau
+
 # Offline W&B mode (no internet required)
 python benchmark.py --data-dir dataset --wandb-offline
 ```
@@ -64,11 +68,15 @@ python dataset_leaks.py dataset --report-dir leak_reports --similarity-threshold
 Detailed JSON reports are saved to the `leak_reports/` directory.
 
 # Fix Leaks
-If leaks are detected, run the fix script to remove leaked files and replace them with fresh data from the download databases (`~/Downloads/<size>_DB`):
+If leaks are detected, run the fix script to remove leaked files and replace them with fresh data from a replacement database:
 ```bash
+# Default paths (dataset in ./dataset, reports in ./leak_reports, DB in ./replacement_db)
 python fix_leaks.py
+
+# Custom paths
+python fix_leaks.py --dataset-root /path/to/dataset --reports-dir /path/to/leak_reports --db-root /path/to/replacement_db
 ```
-This script reads the reports from `leak_reports/`, removes the offending files, and copies replacement files that don't introduce new leaks. After running it, re-run `dataset_leaks.py` to verify the dataset is clean.
+This script reads the reports from the reports directory, removes the offending files, and copies replacement files that don't introduce new leaks. After running it, re-run `dataset_leaks.py` to verify the dataset is clean.
 
 # Full Analysis Pipeline
 Run the complete analysis pipeline (leak detection, noise analysis, training & benchmarking) in one command:

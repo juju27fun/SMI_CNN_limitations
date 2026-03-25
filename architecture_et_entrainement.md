@@ -1,14 +1,14 @@
-# Architecture du modele et boucle d'entrainement
+# Model Architecture and Training Loop
 
-## 1. Architecture du Conv1DClassifier
+## 1. Conv1DClassifier Architecture
 
-> Input : signal 1D de particule (1 canal, 250 echantillons apres decimation x4)
+> Input: 1D particle signal (1 channel, 250 samples after 4x decimation)
 
 ```mermaid
 graph TD
     INPUT["Input<br/>(batch, 1, 250)"]
 
-    subgraph BLOC1["Bloc Conv 1"]
+    subgraph BLOC1["Conv Block 1"]
         CONV1["Conv1d<br/>in=1, out=64, kernel=5, pad=2<br/>Params: 384"]
         BN1["BatchNorm1d(64)<br/>Params: 128"]
         RELU1["ReLU"]
@@ -16,7 +16,7 @@ graph TD
         DROP1["Dropout(0.2)"]
     end
 
-    subgraph BLOC2["Bloc Conv 2"]
+    subgraph BLOC2["Conv Block 2"]
         CONV2["Conv1d<br/>in=64, out=128, kernel=5, pad=2<br/>Params: 41 088"]
         BN2["BatchNorm1d(128)<br/>Params: 256"]
         RELU2["ReLU"]
@@ -24,7 +24,7 @@ graph TD
         DROP2["Dropout(0.2)"]
     end
 
-    subgraph BLOC3["Bloc Conv 3"]
+    subgraph BLOC3["Conv Block 3"]
         CONV3["Conv1d<br/>in=128, out=256, kernel=5, pad=2<br/>Params: 164 096"]
         BN3["BatchNorm1d(256)<br/>Params: 512"]
         RELU3["ReLU"]
@@ -32,7 +32,7 @@ graph TD
         DROP3["Dropout(0.2)"]
     end
 
-    subgraph MLP["Tete de classification MLP"]
+    subgraph MLP["Classification Head (MLP)"]
         FLAT["Flatten<br/>(batch, 7936)"]
         FC1["Linear(7936, 256)<br/>Params: 2 031 872"]
         RELU_FC["ReLU"]
@@ -56,10 +56,10 @@ graph TD
     style MLP fill:#f3e5f5
 ```
 
-**Total parametres entrainables : ~2 239 107**
+**Total trainable parameters: ~2 239 107**
 
-| Couche | Parametres |
-|--------|-----------|
+| Layer | Parameters |
+|-------|-----------|
 | Conv1 + BN1 | 512 |
 | Conv2 + BN2 | 41 344 |
 | Conv3 + BN3 | 164 608 |
@@ -67,40 +67,40 @@ graph TD
 | FC2 | 771 |
 | **Total** | **~2 239 107** |
 
-> 90% des parametres sont dans la couche FC1 (passage de 7936 vers 256).
+> 90% of parameters are in the FC1 layer (7936 to 256 projection).
 
 ---
 
-## 2. Boucle d'entrainement — une iteration (un batch)
+## 2. Training Loop — One Iteration (One Batch)
 
 ```mermaid
 graph TD
-    START["Debut de l iteration<br/>Charger un batch signals et labels"]
-    TO_DEVICE["Transfert vers device<br/>signals.to device - labels.to device"]
-    ZERO_GRAD["optimizer.zero_grad<br/>Reinitialiser les gradients a zero"]
+    START["Start of iteration<br/>Load a batch of signals and labels"]
+    TO_DEVICE["Transfer to device<br/>signals.to device - labels.to device"]
+    ZERO_GRAD["optimizer.zero_grad<br/>Reset gradients to zero"]
 
     subgraph FORWARD["Forward pass"]
-        FWD1["signals passe dans le modele<br/>outputs = model signals"]
+        FWD1["Pass signals through the model<br/>outputs = model signals"]
         FWD2["Conv1 - BN1 - ReLU - Pool - Dropout<br/>Conv2 - BN2 - ReLU - Pool - Dropout<br/>Conv3 - BN3 - ReLU - Pool - Dropout<br/>Flatten - FC1 - ReLU - Dropout - FC2"]
-        FWD3["Sortie : logits de forme batch x 3"]
+        FWD3["Output: logits of shape batch x 3"]
     end
 
-    subgraph LOSS_CALC["Calcul de la loss"]
-        LOSS["loss = CrossEntropyLoss outputs labels<br/>1. Softmax sur les logits<br/>2. Log-vraisemblance negative<br/>3. Moyenne sur le batch"]
+    subgraph LOSS_CALC["Loss computation"]
+        LOSS["loss = CrossEntropyLoss outputs labels<br/>1. Softmax on logits<br/>2. Negative log-likelihood<br/>3. Average over batch"]
     end
 
     subgraph BACKWARD["Backpropagation"]
-        BACK1["loss.backward<br/>Calcul des gradients dL/dw<br/>pour chaque parametre w"]
-        BACK2["Parcours du graphe de calcul<br/>en sens inverse :<br/>FC2 - FC1 - Conv3 - Conv2 - Conv1"]
-        BACK3["Chaque parametre accumule<br/>son gradient dans .grad"]
+        BACK1["loss.backward<br/>Compute gradients dL/dw<br/>for each parameter w"]
+        BACK2["Traverse the computation graph<br/>in reverse order:<br/>FC2 - FC1 - Conv3 - Conv2 - Conv1"]
+        BACK3["Each parameter accumulates<br/>its gradient in .grad"]
     end
 
-    subgraph UPDATE["Mise a jour des poids"]
-        OPT["optimizer.step<br/>Adam : w = w - lr * m / sqrt v + eps<br/>avec weight_decay=0.0001"]
+    subgraph UPDATE["Weight update"]
+        OPT["optimizer.step<br/>Adam: w = w - lr * m / sqrt v + eps<br/>with weight_decay=0.0001"]
     end
 
-    ACCUM["Accumuler la loss pour le reporting<br/>total_loss += loss.item * batch_size"]
-    NEXT["Batch suivant ou fin de epoch"]
+    ACCUM["Accumulate loss for reporting<br/>total_loss += loss.item * batch_size"]
+    NEXT["Next batch or end of epoch"]
 
     START --> TO_DEVICE --> ZERO_GRAD
     ZERO_GRAD --> FWD1 --> FWD2 --> FWD3
@@ -117,25 +117,27 @@ graph TD
     style NEXT fill:#e1f5fe
 ```
 
-### Cycle complet d une epoch
+### Complete Epoch Cycle
 
 ```mermaid
 graph LR
-    subgraph EPOCH["Pour chaque epoch de 1 a 150"]
-        TRAIN["model.train<br/>Boucle sur tous les batchs<br/>retourne train_loss moyen"]
-        EVAL_STEP["model.eval + torch.no_grad<br/>Validation sur val_loader<br/>retourne val_loss et val_accuracy"]
-        CHECK["val_acc superieur a best_val_acc ?<br/>Oui : sauvegarder best_model.pth"]
-        LOG["Affichage toutes les 10 epochs"]
+    subgraph EPOCH["For each epoch from 1 to 150"]
+        TRAIN["model.train<br/>Loop over all batches<br/>returns average train_loss"]
+        EVAL_STEP["model.eval + torch.no_grad<br/>Validation on val_loader<br/>returns val_loss and val_accuracy"]
+        SCHED["LR scheduler step<br/>CosineAnnealingLR or<br/>ReduceLROnPlateau"]
+        CHECK["val_acc better than best_val_acc?<br/>Yes: save best_model.pth"]
+        LOG["Display every 10 epochs"]
     end
 
-    TRAIN --> EVAL_STEP --> CHECK --> LOG
+    TRAIN --> EVAL_STEP --> SCHED --> CHECK --> LOG
 
-    FINAL["Charger best_model.pth<br/>Tester sur test_loader<br/>Classification report + Confusion matrix"]
+    FINAL["Load best_model.pth<br/>Test on test_loader<br/>Classification report + Confusion matrix"]
 
     LOG --> FINAL
 
     style TRAIN fill:#e8f5e9
     style EVAL_STEP fill:#fff9c4
+    style SCHED fill:#e1f5fe
     style CHECK fill:#f3e5f5
     style FINAL fill:#ffcdd2
 ```

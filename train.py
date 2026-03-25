@@ -17,17 +17,6 @@ from torchsummary import summary
 
 RAW_SIGNAL_LENGTH = 2500
 
-# ---------------- Argument parser ----------------
-parser = argparse.ArgumentParser(description="Train Conv1D classifier for particle classification")
-parser.add_argument("--data-dir", type=str, default="dataset", help="Path to dataset root directory")
-parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
-parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
-parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
-parser.add_argument("--lr", type=float, default=6e-4, help="Learning rate for Adam optimizer")
-parser.add_argument("--decimate", type=int, default=4, help="Decimation factor for input signals")
-parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of training data for validation")
-parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-
 
 class ParticleDataset(Dataset):
     """Dataset for loading particle signals from .npy files (no filtering or decimation)."""
@@ -64,14 +53,13 @@ class ParticleDataset(Dataset):
         return signal_tensor, label
     
 class BandpassFilter:
-    """ArithmeticError: Bandpass filter using FFT."""
-    def __init__(self, low_cutoff_khz: float, high_cutoff_khz: float, sample_rate_mhz: float):
+    """FFT bandpass filter (5–100 kHz). Best filter per filter_study_report.md."""
+    def __init__(self, low_cutoff_khz: float = 5.0, high_cutoff_khz: float = 100.0, sample_rate_mhz: float = 2.0):
         self.low_cutoff = low_cutoff_khz * 1000  # Convert kHz to Hz
         self.high_cutoff = high_cutoff_khz * 1000  # Convert kHz to Hz
         self.sample_rate = sample_rate_mhz * 1_000_000  # Convert MHz to Hz
 
     def __call__(self, signal: torch.Tensor) -> torch.Tensor:
-        # Apply bandpass filter using FFT
         fft_signal = torch.fft.fft(signal)
         freqs = torch.fft.fftfreq(signal.size(-1), 1 / self.sample_rate)
         mask = (torch.abs(freqs) >= self.low_cutoff) & (torch.abs(freqs) <= self.high_cutoff)
@@ -79,7 +67,7 @@ class BandpassFilter:
         return torch.fft.ifft(filtered_fft).real
 
 class Decimate:
-    """ArithmeticError: Decimation by slicing."""
+    """Decimation by slicing every Nth sample."""
     def __init__(self, decimate: int):
         self.decimate = decimate
 
@@ -275,6 +263,15 @@ def run_training(args, device, class_names, train_loader, val_loader, test_loade
 
 # ----------------- Main function -----------------
 def main():
+    parser = argparse.ArgumentParser(description="Train Conv1D classifier for particle classification")
+    parser.add_argument("--data-dir", type=str, default="dataset", help="Path to dataset root directory")
+    parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
+    parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=6e-4, help="Learning rate for Adam optimizer")
+    parser.add_argument("--decimate", type=int, default=4, help="Decimation factor for input signals")
+    parser.add_argument("--val-split", type=float, default=0.2, help="Fraction of training data for validation")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     args = parser.parse_args()
     
     torch.manual_seed(args.seed)
@@ -291,7 +288,7 @@ def main():
 
     bandpass = BandpassFilter(low_cutoff_khz=5.0, high_cutoff_khz=100.0, sample_rate_mhz=2.0)
     decimate = Decimate(decimate=args.decimate)
-    
+
     train_dataset = ParticleDataset(data_dir / "train", class_names, transforms=[bandpass, decimate])
     test_dataset = ParticleDataset(data_dir / "test", class_names, transforms=[bandpass, decimate])
     

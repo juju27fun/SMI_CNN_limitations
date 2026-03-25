@@ -61,26 +61,34 @@ The real acquisition chain includes an analog bandpass filter to reject DC compo
 
 ### How it is generated
 
-A 4th-order Butterworth bandpass filter is applied using `scipy.signal.butter` + `filtfilt` (zero-phase, forward-backward filtering):
+The generation-time bandpass filter is **disabled by default**. The training pipeline (`train.py`) already applies its own FFT-based bandpass (F2) at load time, so filtering at generation time is redundant for most use cases.
+
+The filter can be re-enabled explicitly with `--with-filter`, or by passing any `--filter-*` parameter. It is also **auto-enabled** when `noise_injection == "before"` (e.g. `--noise realistic`), because the pre-filter noise was calibrated assuming the filter would attenuate it.
+
+When active, it uses a Butterworth bandpass via `scipy.signal.butter` + `filtfilt` (zero-phase, forward-backward filtering):
 
 ```
-Passband: [7 000, 80 000] Hz
-Order:    4 (4th-order Butterworth → −24 dB/octave rolloff)
-Method:   filtfilt (zero-phase, equivalent to 8th-order magnitude response)
-Fs:       2 MHz
+Default passband:      [7 000, 80 000] Hz   (with --with-filter)
+Auto-enabled passband: [5 000, 100 000] Hz  (with noise_injection="before")
+Order:                 4 (4th-order Butterworth → −24 dB/octave rolloff)
+Method:                filtfilt (zero-phase, equivalent to 8th-order magnitude response)
+Fs:                    2 MHz
 ```
+
+The auto-enabled passband uses `[5, 100] kHz` to match the training-time F2 filter range. All parameters are overridable with `--filter-lowcut`, `--filter-highcut`, and `--filter-order`.
 
 The Butterworth design is chosen for its maximally flat magnitude response in the passband.
 
 ### What is done to match realistic signals
 
-- The cutoff frequencies (7 kHz / 80 kHz) are set to match the hardware filter in the Bokeh viewer acquisition software used in the real setup.
+- The default cutoff frequencies (7 kHz / 80 kHz) are set to match the hardware filter in the Bokeh viewer acquisition software used in the real setup.
+- The auto-enabled cutoffs (5 kHz / 100 kHz) match the training-time F2 filter, avoiding double-narrowing of the passband.
 - Zero-phase filtering (`filtfilt`) avoids phase distortion that would alter the burst envelope shape.
 
 ### Current limitations
 
 1. **Analog vs digital mismatch.** The real system uses an analog filter; the simulation uses a digital IIR filter. At low orders (4), the difference is negligible, but edge effects near the passband boundaries may differ.
-2. **Double filtering.** The training pipeline applies an additional FFT-based bandpass at load time (`train.py` uses `[5, 100] kHz` or `[8, 40] kHz`). The interaction between the generation-time Butterworth filter and the inference-time FFT filter is not explicitly characterized.
+2. **Double filtering.** When the generation filter is active and the training pipeline also applies its FFT-based bandpass at load time, the signal passes through two filters. The auto-enabled passband `[5, 100] kHz` is deliberately wider than the training-time filter to minimize this effect.
 
 ---
 
@@ -155,6 +163,8 @@ Parameters:
 - `σ_base = 0.21` — higher than other presets because the bandpass filter will attenuate most of the noise power
 - `CV = 0.19` (coefficient of variation) — the lognormal multiplier ensures that each sample sees a different noise amplitude
 - `noise_injection = before` — noise is added before filtering, so it gets shaped by the same bandpass as the signal
+
+**Filter auto-enable.** Because `noise_injection = "before"`, the generation-time bandpass filter is **automatically enabled** with a `[5, 100] kHz` passband (matching the training-time F2 filter). Without the filter, the full σ = 0.21 noise would remain unattenuated, producing signals ~3× noisier than intended. The auto-enabled passband can be overridden with `--filter-lowcut` / `--filter-highcut`.
 
 **Calibration.**
 - `σ_base = 0.21`: measured as the mean standard deviation of the 305 real noise files (measured value: 0.216, rounded).
@@ -263,13 +273,13 @@ The point where noise enters the signal chain affects its spectral characteristi
 
 ### `after` (default for most presets)
 
-Noise is added **after** the bandpass filter. The noise retains its original spectrum (white or colored), regardless of the filter. This is simpler but means the noise can have energy outside the signal's passband.
+Noise is added **after** the bandpass filter (or after the filter step, even when the filter is disabled). The noise retains its original spectrum (white or colored), regardless of the filter. This is simpler but means the noise can have energy outside the signal's passband.
 
 ### `before` (used by `--noise realistic`)
 
-Noise is added **before** the bandpass filter. The filter then shapes the noise spectrum identically to the signal. This more accurately models a system where noise is present at the sensor (photodetector shot noise, Johnson noise) and goes through the same analog filter as the signal.
+Noise is added **before** the bandpass filter. The generation-time filter is **automatically enabled** when `noise_injection = "before"` with a `[5, 100] kHz` passband, so the filter shapes the noise spectrum identically to the signal. This more accurately models a system where noise is present at the sensor (photodetector shot noise, Johnson noise) and goes through the same analog filter as the signal.
 
-**Trade-off.** `before` injection requires a higher `σ_base` (0.21 vs 0.058) because the bandpass filter attenuates most of the noise energy. The ratio `0.21 / 0.058 ≈ 3.6` reflects the fact that only ~1/3.6² ≈ 7.7% of the white noise power falls within the `[7, 80] kHz` passband at `f_s = 2 MHz`.
+**Trade-off.** `before` injection requires a higher `σ_base` (0.21 vs 0.058) because the bandpass filter attenuates most of the noise energy. The ratio `0.21 / 0.058 ≈ 3.6` reflects the fact that only ~1/3.6² ≈ 7.7% of the white noise power falls within the passband at `f_s = 2 MHz`.
 
 ### Current limitations
 
@@ -386,8 +396,21 @@ Reads all parameters from a `.ini` configuration file, allowing full control. Us
 
 **Parameter resolution order:**
 ```
-DEFAULT_SIM → --signal preset → --noise preset → .ini config file (highest priority)
+DEFAULT_SIM → --signal preset → --noise preset → .ini config file → --filter-* CLI args (highest priority)
 ```
+
+### 9.4 Filter CLI options
+
+The generation-time bandpass filter is disabled by default. It can be controlled with:
+
+| Option | Effect |
+|---|---|
+| `--with-filter` | Enable the filter with default passband `[7, 80] kHz` |
+| `--filter-lowcut HZ` | Set low cutoff (implies `--with-filter`) |
+| `--filter-highcut HZ` | Set high cutoff (implies `--with-filter`) |
+| `--filter-order N` | Set Butterworth order (implies `--with-filter`) |
+
+The filter is also **auto-enabled** with a `[5, 100] kHz` passband when `noise_injection == "before"` (e.g. `--noise realistic`). Explicit `--filter-*` arguments override the auto defaults.
 
 ---
 

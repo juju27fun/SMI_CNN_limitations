@@ -1,15 +1,14 @@
---index-url https://download.pytorch.org/whl/cu130
-torch
-torchvision
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
 
---index-url https://pypi.org/simple/
-torchsummary
-scikit-learn
-matplotlib
-numpy
-argparse
-ipykernel
-seaborn
-streamlit
-scipy
-tqdm
+torchsummary==1.5.1
+scikit-learn==1.8.0
+matplotlib==3.10.8
+numpy==2.4.3
+seaborn==0.13.2
+streamlit==1.55.0
+scipy==1.17.1
+tqdm==4.67.3
+ipykernel==7.2.0
+wandb==0.25.1

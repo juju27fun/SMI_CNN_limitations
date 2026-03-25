@@ -1,208 +1,215 @@
-# Génération du dataset OFI
+# OFI Dataset Generation
 
-Script : `generate_dataset.py`
-Génère des signaux OFI (Optical Feedback Interferometry) simulés pour entraîner un CNN de classification de particules (2 µm, 4 µm, 10 µm).
+Script: `generate_dataset.py`
+Generates simulated OFI (Optical Feedback Interferometry) signals for training a particle classification CNN (2 um, 4 um, 10 um).
 
-## Prérequis
+## Prerequisites
 
 ```bash
 pip install numpy scipy tqdm
 ```
 
-Le dossier `Noise/` (305 fichiers `.npy` de bruit réel) est nécessaire pour `--noise real`.
+The `Noise/` folder (305 real noise `.npy` files) is required for `--noise real`.
 
 ---
 
-## Exemples rapides
+## Quick Examples
 
 ```bash
-# Signal pur, pas de bruit (défaut)
+# Pure signal, no noise (default)
 python generate_dataset.py test --output ./preview --force
 
-# Signal réaliste + bruit coloré
+# Realistic signal + colored noise
 python generate_dataset.py auto --signal realistic --noise colored --force
 
-# Tout réaliste (signal + bruit avant filtre + amplitude variable)
+# Full realism (signal + noise before filter + variable amplitude)
 python generate_dataset.py auto --signal realistic --noise realistic --force
 
-# Injection de vrai bruit
+# Real noise injection
 python generate_dataset.py auto --noise real --force
 
-# Override d'un paramètre via config
+# Override a parameter via config
 echo -e "[noise]\nnoise_sigma = 0.1" > custom.ini
 python generate_dataset.py auto --config custom.ini --force
 ```
 
 ---
 
-## Les 3 modes
+## The 3 Modes
 
-| Mode | Description | Commande |
+| Mode | Description | Command |
 |------|------------|---------|
-| `auto` | Dataset complet (1511 fichiers, train/test split) | `... auto` |
-| `test` | Aperçu rapide (3 signaux/classe, dossier plat) | `... test` |
-| `manual` | Config `.ini` obligatoire | `... manual --config params.ini` |
+| `auto` | Full dataset (1511 files, train/test split) | `... auto` |
+| `test` | Quick preview (3 signals/class, flat folder) | `... test` |
+| `manual` | Requires a `.ini` config file | `... manual --config params.ini` |
 
 ---
 
-## Options communes
+## Common Options
 
-| Option | Défaut | Description |
+| Option | Default | Description |
 |---|---|---|
-| `--signal {pure,realistic}` | `realistic` | Preset signal |
-| `--noise {none,white,colored,realistic,real}` | `none` | Preset bruit |
-| `--noise-dir DIR` | `./Noise` | Dossier des fichiers de bruit réel |
-| `--config FILE` | — | Fichier `.ini` pour surcharger les paramètres |
-| `--init-config FILE` | — | Génère un template `.ini` et quitte |
-| `--output DIR` | `./dataset` ou `./dataset_test` | Dossier de sortie |
-| `--force` | — | Écrase le dossier existant |
+| `--signal {pure,realistic}` | `realistic` | Signal preset |
+| `--noise {none,white,colored,realistic,real}` | `none` | Noise preset |
+| `--noise-dir DIR` | `./Noise` | Directory containing real noise files |
+| `--config FILE` | — | `.ini` file to override default parameters |
+| `--init-config FILE` | — | Generate a `.ini` template and exit |
+| `--output DIR` | `./dataset` or `./dataset_test` | Output directory |
+| `--force` | — | Overwrite existing directory |
+| `--with-filter` | — | Enable generation-time bandpass filter |
+| `--filter-lowcut HZ` | 7000 | Low cutoff frequency (implies `--with-filter`) |
+| `--filter-highcut HZ` | 80000 | High cutoff frequency (implies `--with-filter`) |
+| `--filter-order N` | 4 | Butterworth filter order (implies `--with-filter`) |
 
-### Résolution des paramètres
+### Parameter Resolution Order
 
 ```
-DEFAULT_SIM  →  preset --signal  →  preset --noise  →  fichier --config (gagne)
+DEFAULT_SIM  ->  --signal preset  ->  --noise preset  ->  --config .ini file  ->  --filter-* CLI args (wins)
 ```
+
+Note: when `noise_injection == "before"`, the bandpass filter is auto-enabled with a `[5, 100] kHz` passband. Explicit `--filter-*` arguments override the auto defaults.
 
 ---
 
-## Presets signal (`--signal`)
+## Signal Presets (`--signal`)
 
 | Preset | dc_offset_std | multiburst_pct | envelope_skew |
 |--------|--------------|----------------|---------------|
 | `pure` | 0 | 0 | [0, 0] |
-| `realistic` (défaut) | 0.15 | 10% | [-0.5, 0.5] |
+| `realistic` (default) | 0.15 | 10% | [-0.5, 0.5] |
 
-### Détail des paramètres signal (`[signal]` dans le `.ini`)
+### Signal Parameter Details (`[signal]` in the `.ini`)
 
-| Paramètre | Description |
+| Parameter | Description |
 |---|---|
-| `dc_offset_std` | Écart-type de l'offset DC aléatoire (0 = désactivé) |
-| `multiburst_pct` | % de signaux avec un second burst (0 = désactivé) |
-| `envelope_skew_min` | Borne inf de l'asymétrie de l'enveloppe |
-| `envelope_skew_max` | Borne sup (0/0 = gaussienne symétrique) |
+| `dc_offset_std` | Standard deviation of random DC offset (0 = disabled) |
+| `multiburst_pct` | % of signals with a second burst (0 = disabled) |
+| `envelope_skew_min` | Lower bound of envelope asymmetry |
+| `envelope_skew_max` | Upper bound (0/0 = symmetric Gaussian) |
 
 ---
 
-## Presets bruit (`--noise`)
+## Noise Presets (`--noise`)
 
 | Preset | noise_type | noise_injection | noise_sigma | noise_variability |
 |--------|-----------|-----------------|-------------|-------------------|
-| `none` (défaut) | — | — | 0 | 0 |
-| `white` | blanc gaussien | après filtre | 0.058 | 0 |
-| `colored` | coloré dual-band (1–80 kHz) | après filtre | 0.058 | 0 |
-| `realistic` | blanc | **avant filtre** | 0.21 | 19% |
-| `real` | fichiers réels | après filtre | 0.058 | 0 |
+| `none` (default) | — | — | 0 | 0 |
+| `white` | white Gaussian | after filter | 0.058 | 0 |
+| `colored` | dual-band colored (1-80 kHz) | after filter | 0.058 | 0 |
+| `realistic` | white | **before filter** | 0.21 | 19% |
+| `real` | real noise files | after filter | 0.058 | 0 |
 
-### Détail des paramètres bruit (`[noise]` dans le `.ini`)
+### Noise Parameter Details (`[noise]` in the `.ini`)
 
-| Paramètre | Valeurs | Description |
+| Parameter | Values | Description |
 |---|---|---|
-| `noise_type` | `none`, `white`, `colored`, `real` | Type de bruit |
-| `noise_injection` | `before`, `after` | Point d'injection vs bandpass |
-| `noise_sigma` | float | Écart-type du bruit |
-| `noise_variability` | float (CV) | Variabilité d'amplitude inter-samples (0 = fixe) |
+| `noise_type` | `none`, `white`, `colored`, `real` | Noise type |
+| `noise_injection` | `before`, `after` | Injection point vs bandpass |
+| `noise_sigma` | float | Noise standard deviation |
+| `noise_variability` | float (CV) | Inter-sample amplitude variability (0 = fixed) |
 
 ### `noise_injection = before`
 
-Le bruit est ajouté AVANT le filtre passe-bande → il est filtré naturellement comme dans le réel. Le sigma doit être plus élevé (~0.21) car le filtre élimine la puissance hors bande.
+Noise is added BEFORE the bandpass filter — it is filtered naturally as in the real system. The bandpass filter is auto-enabled with a `[5, 100] kHz` passband. Sigma must be higher (~0.21) because the filter removes out-of-band power.
 
 ### `noise_variability`
 
-Pour chaque sample, sigma est modulé par `lognormal(0, noise_variability)`. La valeur 0.19 reproduit les 19% de coefficient de variation mesurés sur les vrais fichiers de bruit.
+For each sample, sigma is scaled by `lognormal(0, noise_variability)`. The value 0.19 reproduces the 19% coefficient of variation measured on real noise files.
 
 ---
 
-## Pipeline de génération
+## Generation Pipeline
 
 ```
-1. simulated_particle()       → signal brut
-2. [multiburst]               → ajout éventuel d'un 2e burst
-3. [envelope skew]            → asymétrie de l'enveloppe
-4. DC subtraction             → suppression du DC
-5. [noise if before]          → bruit AVANT bandpass
-6. bandpass filter             → filtre passe-bande 7–80 kHz
-7. [noise if after]           → bruit APRÈS bandpass
-8. [DC offset]                → offset aléatoire
+1. simulated_particle()       -> raw signal
+2. [multiburst]               -> optional second burst
+3. [envelope skew]            -> envelope asymmetry
+4. DC subtraction             -> remove DC component
+5. [noise if before]          -> noise BEFORE bandpass
+6. bandpass filter             -> 7-80 kHz bandpass (if enabled)
+7. [noise if after]           -> noise AFTER bandpass
+8. [DC offset]                -> random offset
 ```
 
-- Étapes 2, 3, 8 contrôlées par `--signal`
-- Étapes 5, 7 contrôlées par `--noise`
-- Signal et bruit sont **indépendants**
+- Steps 2, 3, 8 controlled by `--signal`
+- Steps 5, 7 controlled by `--noise`
+- Step 6 disabled by default; auto-enabled when `noise_injection=before`
+- Signal and noise are **independent**
 
 ---
 
-## Paramètres par défaut
+## Default Parameters
 
-### Simulation physique
+### Physics Simulation
 
-| Paramètre | Valeur | Description |
+| Parameter | Value | Description |
 |---|---|---|
-| `laser_lambda` | 1550e-9 m | Longueur d'onde |
-| `adq_freq` | 2 MHz | Fréquence d'acquisition |
-| `inc_angle` | 80° | Angle d'incidence |
-| `po` | 0.016536 mV | Puissance laser |
-| `time_max` | 2500 | Échantillons par signal |
-| `s_l` | 7e-6 m | Diamètre du spot laser |
-| `p_speed` | [0.05, 0.20] m/s | Vitesse de la particule |
-| `t_impact` | [40%, 60%] de la fenêtre | Position du burst |
+| `laser_lambda` | 1550e-9 m | Wavelength |
+| `adq_freq` | 2 MHz | Acquisition frequency |
+| `inc_angle` | 80 deg | Incidence angle |
+| `po` | 0.016536 mV | Laser power |
+| `time_max` | 2500 | Samples per signal |
+| `s_l` | 7e-6 m | Laser spot diameter |
+| `p_speed` | [0.05, 0.20] m/s | Particle speed |
+| `t_impact` | [40%, 60%] of window | Burst position |
 
-### Filtre
+### Filter
 
-| Paramètre | Valeur |
+| Parameter | Value |
 |---|---|
 | `filter_lowcut` | 7 000 Hz |
 | `filter_highcut` | 80 000 Hz |
 | `filter_order` | 4 (Butterworth) |
 
-### Indice de modulation par classe (m0)
+### Modulation Index per Class (m0)
 
-| Classe | m0 min | m0 max | Ratio d'amplitude |
+| Class | m0 min | m0 max | Amplitude ratio |
 |---|---|---|---|
-| 2 µm | 7.0 | 14.0 | 1.00x |
-| 4 µm | 18.0 | 36.0 | ~1.86x |
-| 10 µm | 20.0 | 95.0 | ~4.33x |
+| 2 um | 7.0 | 14.0 | 1.00x |
+| 4 um | 18.0 | 36.0 | ~1.86x |
+| 10 um | 20.0 | 95.0 | ~4.33x |
 
 ---
 
-## Fichier de config `.ini`
+## `.ini` Configuration File
 
-Sections disponibles :
+Available sections:
 
-| Section | Contenu |
+| Section | Content |
 |---|---|
-| `[simulation]` | Paramètres physiques |
-| `[randomization]` | Plages de vitesse, T_impact |
-| `[postprocessing]` | Filtre passe-bande |
-| `[noise]` | Type, injection, sigma, variabilité |
+| `[simulation]` | Physics parameters |
+| `[randomization]` | Speed and T_impact ranges |
+| `[postprocessing]` | Bandpass filter |
+| `[noise]` | Type, injection, sigma, variability |
 | `[signal]` | DC offset, multiburst, envelope skew |
-| `[class_NOM]` | Taille particule, train/test, m0 min/max |
+| `[class_NAME]` | Particle size, train/test counts, m0 min/max |
 
-Générer un template complet :
+Generate a complete template:
 ```bash
 python generate_dataset.py auto --init-config params.ini
 ```
 
 ---
 
-## Interface graphique (Streamlit)
+## Graphical Interface (Streamlit)
 
-Alternative visuelle au CLI. Tous les paramètres sont visibles et modifiables avant de lancer la génération.
+Visual alternative to the CLI. All parameters are visible and editable before generation.
 
 ```bash
 streamlit run generate_ui.py
 ```
 
-Fonctionnalités :
-- Dropdowns pour les presets signal et bruit (auto-remplissage des champs)
-- Tous les paramètres éditables en temps réel
-- Preview : génère 3 samples/classe et affiche les plots + statistiques
-- Commande CLI équivalente affichée en bas (pour apprendre le CLI)
-- Sections avancées dépliables (simulation physique, filtre, classes)
-- Bouton de génération complète avec barre de progression
+Features:
+- Dropdowns for signal and noise presets (auto-fill fields)
+- All parameters editable in real-time
+- Preview: generates 3 samples/class and displays plots + statistics
+- Equivalent CLI command shown at the bottom
+- Collapsible advanced sections (physics simulation, filter, classes)
+- Full generation button with progress bar
 
 ---
 
-## Format des fichiers générés
+## Generated File Format
 
 - `.npy` (NumPy binary), shape `(2500,)`, dtype `float64`
-- Nommage : `sample_0000.npy`, `sample_0001.npy`, …
+- Naming: `sample_0000.npy`, `sample_0001.npy`, ...

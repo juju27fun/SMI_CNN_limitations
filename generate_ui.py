@@ -190,10 +190,25 @@ with st.expander("Bandpass filter"):
         "Butterworth zero-phase bandpass filter (scipy.signal.filtfilt). "
         "Applied to the signal after DC subtraction. Removes DC drift and high-frequency noise."
     )
+    apply_gen_filter = st.checkbox(
+        "Enable bandpass filter during generation", value=False,
+        help="When enabled, the Butterworth bandpass is applied to each signal during generation. "
+             "When disabled, the raw signal is saved (filtering can be done at training time instead).",
+    )
+    sim["apply_generation_filter"] = apply_gen_filter
+
+    if sim["noise_injection"] == "before" and not apply_gen_filter and sim["noise_type"] != "none":
+        st.warning(
+            "Noise injection is set to **before** but the generation bandpass filter is **disabled**. "
+            "'before' and 'after' will behave identically (noise is added but never filtered). "
+            "Enable the bandpass filter or switch injection to 'after'."
+        )
+
     f1, f2, f3 = st.columns(3)
     with f1:
         sim["filter_lowcut"] = st.number_input(
             "Low cutoff (Hz)", value=sim["filter_lowcut"], step=1000,
+            disabled=not apply_gen_filter,
             help="Lower cutoff frequency. Removes slow baseline drift. "
                  "Must be below the Doppler frequency: `f_D = 2*V*sin(10 deg)/lambda`. "
                  "At V=0.05 m/s: f_D ~ 11.2 kHz.",
@@ -201,15 +216,33 @@ with st.expander("Bandpass filter"):
     with f2:
         sim["filter_highcut"] = st.number_input(
             "High cutoff (Hz)", value=sim["filter_highcut"], step=1000,
+            disabled=not apply_gen_filter,
             help="Upper cutoff frequency. Removes high-frequency electronic noise. "
                  "Should be above the maximum Doppler frequency in the dataset.",
         )
     with f3:
         sim["filter_order"] = int(st.number_input(
             "Filter order", value=sim["filter_order"], step=1,
+            disabled=not apply_gen_filter,
             help="Order of the Butterworth filter. Higher order = sharper cutoff but more ringing. "
                  "Order 4 is standard for OFI signal processing.",
         ))
+
+    # Validation warnings
+    if apply_gen_filter:
+        nyquist = sim["adq_freq"] / 2
+        if sim["filter_lowcut"] >= sim["filter_highcut"]:
+            st.error(
+                f"Low cutoff ({sim['filter_lowcut']:.0f} Hz) must be less than "
+                f"high cutoff ({sim['filter_highcut']:.0f} Hz)."
+            )
+        elif sim["filter_highcut"] >= nyquist:
+            st.error(
+                f"High cutoff ({sim['filter_highcut']:.0f} Hz) must be below "
+                f"Nyquist frequency ({nyquist:.0f} Hz = adq_freq / 2)."
+            )
+        elif sim["filter_lowcut"] <= 0:
+            st.error("Low cutoff must be positive.")
 
 with st.expander("Randomization"):
     st.caption("Ranges for random parameters drawn independently for each sample.")
@@ -276,6 +309,11 @@ if force:
     cli_parts.append("--force")
 if noise_preset == "real":
     cli_parts.extend(["--noise-dir", noise_dir])
+if apply_gen_filter:
+    cli_parts.append("--with-filter")
+    cli_parts.extend(["--filter-lowcut", str(int(sim["filter_lowcut"]))])
+    cli_parts.extend(["--filter-highcut", str(int(sim["filter_highcut"]))])
+    cli_parts.extend(["--filter-order", str(sim["filter_order"])])
 st.code(" ".join(cli_parts), language="bash")
 
 # ── Action buttons ────────────────────────────────────────────────────────

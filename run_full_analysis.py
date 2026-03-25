@@ -137,6 +137,8 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--run-id", type=str, default="run1", help="Run identifier for W&B naming")
     parser.add_argument("--wandb-offline", action="store_true", help="Run W&B in offline mode")
+    parser.add_argument("--scheduler", choices=["none", "cosine", "plateau"], default="cosine",
+                        help="LR scheduler: none, cosine, plateau (default: cosine)")
 
     args = parser.parse_args()
 
@@ -235,6 +237,7 @@ def main():
         "--lr", str(args.lr),
         "--patience", str(args.patience),
         "--seed", str(args.seed),
+        "--scheduler", args.scheduler,
     ]
     if args.real_test_dir:
         bench_cmd += ["--real-test-dir", args.real_test_dir]

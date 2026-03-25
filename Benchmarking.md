@@ -26,6 +26,9 @@ python benchmark.py --data-dir dataset --wandb-offline
 
 # Custom hyperparameters
 python benchmark.py --data-dir dataset --epochs 200 --lr 1e-3 --batch-size 64 --patience 20
+
+# Disable LR scheduler (constant LR)
+python benchmark.py --data-dir dataset --scheduler none
 ```
 
 ### Logged metrics summary
@@ -89,6 +92,7 @@ config = {
     "has_real_test": False,
     "patience": 0,
     "seed": 42,
+    "scheduler": "cosine",
 }
 
 run = wandb.init(
@@ -114,7 +118,7 @@ run.config["optimizer"] = "AdamW"
 run.config.update({"scheduler": "cosine", "weight_decay": 1e-4})
 ```
 
-**Current benchmark config includes:** `model_name`, `model_size_params`, `dataset`, `dataset_size`, `epochs`, `batch_size`, `learning_rate`, `optimizer`, `seed`, `patience`, plus architecture-specific params (`decimate`, `input_length`, `num_classes`, `dropout_conv`, `dropout_fc`, `val_split`, `convergence_threshold`, `has_real_test`, `weight_decay`).
+**Current benchmark config includes:** `model_name`, `model_size_params`, `dataset`, `dataset_size`, `epochs`, `batch_size`, `learning_rate`, `optimizer`, `seed`, `patience`, `scheduler`, plus architecture-specific params (`decimate`, `input_length`, `num_classes`, `dropout_conv`, `dropout_fc`, `val_split`, `convergence_threshold`, `has_real_test`, `weight_decay`).
 
 ---
 
@@ -737,6 +741,7 @@ Useful for profiling training efficiency and identifying bottlenecks.
 - [x]  Call `wandb.init()` with config, group, tags, name, job_type
 - [x]  Use `run.define_metric()` to set `epoch` as x-axis + summary aggregation goals
 - [x]  Log per-epoch: `train/loss`, `train/accuracy`, `val/loss`, `val/accuracy`, `epoch_time_sec`, `learning_rate`
+- [x]  LR scheduler support (`--scheduler cosine|plateau|none`, default: cosine). `learning_rate` logs the actual LR from the optimizer each epoch
 - [ ]  Use `run.watch(model)` for gradient monitoring (optional, not yet added)
 - [x]  At end: set `run.summary` for `best_val_accuracy`, `best_epoch`, `total_training_time_sec`, `convergence_time_sec`, `final_val_accuracy`, `final_val_loss`
 - [x]  Early stopping with configurable patience
@@ -793,6 +798,7 @@ config = {
     "optimizer": "Adam",
     "seed": args.seed,
     "patience": args.patience,
+    "scheduler": args.scheduler,
     # ... plus architecture-specific params
 }
 run = wandb.init(
@@ -831,7 +837,7 @@ for epoch in range(args.epochs):
         "val/loss": val_loss,
         "val/accuracy": val_acc,
         "epoch_time_sec": epoch_time,
-        "learning_rate": args.lr,
+        "learning_rate": current_lr,  # actual LR from optimizer (tracks scheduler)
     })
 
     if val_acc > best_val_acc:

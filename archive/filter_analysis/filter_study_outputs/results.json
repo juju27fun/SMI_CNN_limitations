@@ -1,0 +1,77 @@
+[
+  {
+    "name": "no_filter",
+    "filters": [],
+    "test_accuracy": 0.957,
+    "test_loss": 0.1891,
+    "best_val_accuracy": 0.9834
+  },
+  {
+    "name": "F1",
+    "filters": [
+      "F1"
+    ],
+    "test_accuracy": 0.9669,
+    "test_loss": 0.0874,
+    "best_val_accuracy": 0.9876
+  },
+  {
+    "name": "F2",
+    "filters": [
+      "F2"
+    ],
+    "test_accuracy": 0.9768,
+    "test_loss": 0.0502,
+    "best_val_accuracy": 0.9917
+  },
+  {
+    "name": "F3",
+    "filters": [
+      "F3"
+    ],
+    "test_accuracy": 0.9669,
+    "test_loss": 0.0788,
+    "best_val_accuracy": 0.9876
+  },
+  {
+    "name": "F1_F2",
+    "filters": [
+      "F1",
+      "F2"
+    ],
+    "test_accuracy": 0.9735,
+    "test_loss": 0.0441,
+    "best_val_accuracy": 0.9917
+  },
+  {
+    "name": "F1_F3",
+    "filters": [
+      "F1",
+      "F3"
+    ],
+    "test_accuracy": 0.957,
+    "test_loss": 0.1436,
+    "best_val_accuracy": 0.9876
+  },
+  {
+    "name": "F2_F3",
+    "filters": [
+      "F2",
+      "F3"
+    ],
+    "test_accuracy": 0.9669,
+    "test_loss": 0.0946,
+    "best_val_accuracy": 0.9793
+  },
+  {
+    "name": "F1_F2_F3",
+    "filters": [
+      "F1",
+      "F2",
+      "F3"
+    ],
+    "test_accuracy": 0.9669,
+    "test_loss": 0.0711,
+    "best_val_accuracy": 0.9793
+  }
+]

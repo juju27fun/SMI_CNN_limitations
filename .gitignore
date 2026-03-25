@@ -15,7 +15,13 @@ __pycache__/
 # Training outputs
 output/
 
+# Weights & Biases
+wandb/
+.netrc
+
 # Reports
 leak_reports/
 *_full_analysis/
 *_Noise_Analysis.pdf
+dataset_f1/
+dataset_nof1/

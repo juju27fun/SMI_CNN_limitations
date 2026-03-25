@@ -31,28 +31,6 @@ from train import (
 )
 
 
-# ──────────────────────────────────────────────
-# Argument parser
-# ──────────────────────────────────────────────
-parser = argparse.ArgumentParser(description="Benchmark pipeline for particle classification")
-parser.add_argument("--data-dir", type=str, default="dataset", help="Path to dataset root (train/test)")
-parser.add_argument("--real-test-dir", type=str, default=None, help="Path to real test data directory")
-parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
-parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
-parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
-parser.add_argument("--lr", type=float, default=6e-4, help="Learning rate")
-parser.add_argument("--decimate", type=int, default=4, help="Decimation factor")
-parser.add_argument("--val-split", type=float, default=0.2, help="Validation split fraction")
-parser.add_argument("--seed", type=int, default=42, help="Random seed")
-parser.add_argument("--convergence-threshold", type=float, default=0.95,
-                    help="Val accuracy threshold to measure convergence time")
-parser.add_argument("--dataset-name", type=str, default="synthetic_v1",
-                    help="Descriptive name for the dataset")
-parser.add_argument("--run-id", type=str, default="run1", help="Run identifier for W&B naming")
-parser.add_argument("--patience", type=int, default=0,
-                    help="Early stopping patience (0 = disabled)")
-parser.add_argument("--wandb-offline", action="store_true", help="Run W&B in offline mode")
-
 
 # ──────────────────────────────────────────────
 # Phase 1 : Pre-training logging
@@ -70,6 +48,7 @@ def log_pre_training(run, num_params, args, train_size, val_size, class_names):
     print(f"  Batch size:       {args.batch_size}")
     print(f"  Learning rate:    {args.lr}")
     print(f"  Optimizer:        Adam (weight_decay=1e-4)")
+    print(f"  LR scheduler:     {args.scheduler}")
     print(f"  Decimation:       {args.decimate}x")
     print(f"  Input length:     {RAW_SIGNAL_LENGTH // args.decimate}")
     print(f"  Classes:          {class_names}")
@@ -84,7 +63,7 @@ def log_pre_training(run, num_params, args, train_size, val_size, class_names):
 # Phase 2 : Training loop with metrics
 # ──────────────────────────────────────────────
 def run_training_loop(run, model, train_loader, val_loader, criterion, optimizer,
-                      device, args):
+                      device, args, scheduler=None):
     """Full training loop with per-epoch W&B logging.
 
     Returns: (best_val_acc, best_epoch, total_time, convergence_time)
@@ -112,6 +91,8 @@ def run_training_loop(run, model, train_loader, val_loader, criterion, optimizer
         )
         epoch_time = time.time() - epoch_start
 
+        current_lr = optimizer.param_groups[0]["lr"]
+
         # W&B per-epoch log
         run.log({
             "epoch": epoch,
@@ -120,8 +101,15 @@ def run_training_loop(run, model, train_loader, val_loader, criterion, optimizer
             "val/loss": val_loss,
             "val/accuracy": val_acc,
             "epoch_time_sec": epoch_time,
-            "learning_rate": args.lr,
+            "learning_rate": current_lr,
         })
+
+        # Step the learning rate scheduler
+        if scheduler is not None:
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                scheduler.step(val_acc)
+            else:
+                scheduler.step()
 
         # Track best
         if val_acc > best_val_acc:
@@ -253,7 +241,32 @@ def run_post_evaluation(run, model, loader, criterion, device, class_names, pref
 # Main
 # ──────────────────────────────────────────────
 def main():
+    parser = argparse.ArgumentParser(description="Benchmark pipeline for particle classification")
+    parser.add_argument("--data-dir", type=str, default="dataset", help="Path to dataset root (train/test)")
+    parser.add_argument("--real-test-dir", type=str, default=None, help="Path to real test data directory")
+    parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
+    parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
+    parser.add_argument("--lr", type=float, default=6e-4, help="Learning rate")
+    parser.add_argument("--decimate", type=int, default=4, help="Decimation factor")
+    parser.add_argument("--val-split", type=float, default=0.2, help="Validation split fraction")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--convergence-threshold", type=float, default=0.95,
+                        help="Val accuracy threshold to measure convergence time")
+    parser.add_argument("--dataset-name", type=str, default=None,
+                        help="Descriptive name for the dataset (default: auto from --data-dir)")
+    parser.add_argument("--run-id", type=str, default="run1", help="Run identifier for W&B naming")
+    parser.add_argument("--patience", type=int, default=0,
+                        help="Early stopping patience (0 = disabled)")
+    parser.add_argument("--wandb-offline", action="store_true", help="Run W&B in offline mode")
+    parser.add_argument("--scheduler", choices=["none", "cosine", "plateau"], default="cosine",
+                        help="LR scheduler: none, cosine (CosineAnnealingLR), plateau (ReduceLROnPlateau)")
     args = parser.parse_args()
+
+    if args.dataset_name is None:
+        args.dataset_name = Path(args.data_dir).name
+        if args.real_test_dir:
+            args.dataset_name += "-" + Path(args.real_test_dir).name
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -317,6 +330,15 @@ def main():
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0001)
 
+    # LR scheduler
+    scheduler = None
+    if args.scheduler == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+    elif args.scheduler == "plateau":
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="max", factor=0.5, patience=10
+        )
+
     # ── W&B Init ──
     wandb_mode = "offline" if args.wandb_offline else "online"
     config = {
@@ -339,6 +361,7 @@ def main():
         "has_real_test": real_test_loader is not None,
         "patience": args.patience,
         "seed": args.seed,
+        "scheduler": args.scheduler,
     }
 
     run = wandb.init(
@@ -363,7 +386,8 @@ def main():
 
         # ── Phase 2 ──
         best_val_acc, best_epoch, total_time, convergence_time = run_training_loop(
-            run, model, train_loader, val_loader, criterion, optimizer, device, args
+            run, model, train_loader, val_loader, criterion, optimizer, device, args,
+            scheduler=scheduler,
         )
 
         # ── Phase 3 ──
