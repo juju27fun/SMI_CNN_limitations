@@ -486,13 +486,19 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
         ("ODIN", odin_id, odin_noise, "ODIN Score", "odin"),
         ("Mahalanobis", maha_id, maha_noise, "Mahalanobis Score", "mahalanobis"),
     ]
+    def _safe_bins(vals, target=50):
+        """Return bin count that won't fail on constant-valued arrays."""
+        if len(vals) == 0 or np.ptp(vals) == 0:
+            return 1
+        return target
+
     for label, id_vals, noise_vals, xlabel, key in hist_configs:
         m = methods[label]
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(id_vals, bins=50, alpha=0.6, label=f"In-dist (n={n_id})",
-                color="#4C72B0", density=True)
-        ax.hist(noise_vals, bins=50, alpha=0.6, label=f"Noise (n={n_noise})",
-                color="#C44E52", density=True)
+        ax.hist(id_vals, bins=_safe_bins(id_vals), alpha=0.6,
+                label=f"In-dist (n={n_id})", color="#4C72B0", density=True)
+        ax.hist(noise_vals, bins=_safe_bins(noise_vals), alpha=0.6,
+                label=f"Noise (n={n_noise})", color="#C44E52", density=True)
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Density")
         ax.set_title(f"{label} Distribution (AUROC={m['auroc']:.3f})")
@@ -589,9 +595,9 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
 
         # Histogram
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.hist(energy_tuned_id, bins=50, alpha=0.6,
+        ax.hist(energy_tuned_id, bins=_safe_bins(energy_tuned_id), alpha=0.6,
                 label=f"In-dist (n={n_id})", color="#4C72B0", density=True)
-        ax.hist(energy_tuned_noise, bins=50, alpha=0.6,
+        ax.hist(energy_tuned_noise, bins=_safe_bins(energy_tuned_noise), alpha=0.6,
                 label=f"Noise (n={n_noise})", color="#C44E52", density=True)
         ax.set_xlabel(f"Energy Score (T={best_T_energy})")
         ax.set_ylabel("Density")
