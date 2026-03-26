@@ -130,18 +130,6 @@ Each check always writes a JSON file (even when no issues are found, to prevent 
 | `0` | No critical leaks (warnings may exist) |
 | `1` | Critical leaks detected |
 
-## Part of the Full Analysis Pipeline
-
-`dataset_leaks.py` is the first step of the `run_full_analysis.py` pipeline. When run through the pipeline, reports are saved to `<dataset_name>_full_analysis/leak_reports/` and a non-zero exit code (critical leaks) aborts the rest of the pipeline (noise analysis and training).
-
-```bash
-# Standalone
-python dataset_leaks.py dataset
-
-# As part of the full pipeline
-python run_full_analysis.py dataset
-```
-
 ## Dependencies
 
 - Python 3.10+

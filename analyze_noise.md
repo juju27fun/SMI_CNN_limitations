@@ -198,18 +198,6 @@ Only generated when files are longer than `--segment` samples (e.g., the 16384-s
 
 ---
 
-## Part of the Full Analysis Pipeline
-
-`analyze_noise.py` is run automatically by `run_full_analysis.py` as the second step of the pipeline. It runs once per class per split (train and test), producing 6 PDFs saved to `<dataset_name>_full_analysis/noise_analysis/`.
-
-```bash
-# Standalone
-python analyze_noise.py dataset/train/2um
-
-# As part of the full pipeline (runs all classes and splits automatically)
-python run_full_analysis.py dataset
-```
-
 ## Dependencies
 
 ```

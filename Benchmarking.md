@@ -4,13 +4,15 @@
 
 ## Implemented Pipeline
 
-The benchmark runs in **3 phases**:
+The benchmark runs in **5 phases**:
 
 | Phase | Function | What it does |
 |-------|----------|--------------|
 | Phase 1 | `log_pre_training()` | Logs config, model size, dataset size to W&B and stdout |
 | Phase 2 | `run_training_loop()` | Full training with per-epoch metrics, best-model tracking, convergence timing, early stopping |
 | Phase 3 | `run_post_evaluation()` | Evaluates best model on synthetic test set (and optionally real test set), logs confusion matrix, F1 table, bar charts, PR/ROC curves |
+| Phase 4 | `extract_features()` + `plot_dimensionality_reduction()` | PCA and t-SNE visualizations of the latent space (fc1 features) for test sets and noise separation |
+| Phase 5 | `run_ood_evaluation()` | OOD noise evaluation with 5 methods (MSP, Energy, ODIN, Mahalanobis, Energy_tuned). Logs AUROC, FPR@95, AUPR, score histograms, ROC comparison, temperature sweep, per-class analysis, and silhouette score |
 
 ### Quick start
 
@@ -20,6 +22,12 @@ python benchmark.py --data-dir dataset
 
 # With real test set (measures generalization gap)
 python benchmark.py --data-dir dataset --real-test-dir dataset_real/test
+
+# With noise samples for OOD evaluation (Phase 5)
+python benchmark.py --data-dir dataset --noise-dir Noise
+
+# Full benchmark: synthetic + real test + OOD noise
+python benchmark.py --data-dir dataset --real-test-dir dataset_real/test --noise-dir Noise
 
 # Offline W&B mode
 python benchmark.py --data-dir dataset --wandb-offline
@@ -38,6 +46,10 @@ python benchmark.py --data-dir dataset --scheduler none
 | Per-epoch | `epoch`, `train/loss`, `train/accuracy`, `val/loss`, `val/accuracy`, `epoch_time_sec`, `learning_rate` |
 | Summary | `best_val_accuracy`, `best_epoch`, `total_training_time_sec`, `convergence_time_sec`, `final_val_accuracy`, `final_val_loss`, `model_size_params`, `dataset_size` |
 | Evaluation | `{prefix}/accuracy`, `{prefix}/loss`, `{prefix}/confusion_matrix`, `{prefix}/f1_per_class`, `{prefix}/f1_bar_chart`, `{prefix}/pr_curve`, `{prefix}/roc_curve` |
+| Dim. reduction | `test_synthetic/pca`, `test_synthetic/tsne`, `test_real/pca`, `test_real/tsne`, `noise_separation/pca`, `noise_separation/tsne` |
+| OOD (summary) | `noise_ood/auroc_{method}`, `noise_ood/fpr95_{method}`, `noise_ood/aupr_{method}` (for msp, energy, odin, mahalanobis, energy_tuned), `noise_ood/avg_max_softmax_id`, `noise_ood/avg_max_softmax_noise`, `noise_ood/avg_entropy_id`, `noise_ood/avg_entropy_noise`, `noise_ood/silhouette_score`, `noise_ood/num_noise_samples` |
+| OOD (plots) | `noise_ood/msp_histogram`, `noise_ood/energy_histogram`, `noise_ood/odin_histogram`, `noise_ood/mahalanobis_histogram`, `noise_ood/prediction_distribution`, `noise_ood/roc_comparison`, `noise_ood/temperature_sweep`, `noise_ood/threshold_analysis` |
+| OOD (tables) | `noise_ood/summary_table`, `noise_ood/operating_points`, `noise_ood/per_class_analysis` |
 | Conditional | `early_stopped_epoch` (if triggered), `generalization_gap` (if real test set provided) |
 
 All runs are logged to the W&B project **`particle-benchmark`** (see `.claude/rules/metrics-conventions.md` for the full specification).
@@ -756,18 +768,38 @@ Useful for profiling training efficiency and identifying bottlenecks.
 - [x]  Generalization gap computed when real test set is provided
 - [x]  Best model saved as W&B artifact via `run.log_model()`
 
-### Phase 4 — Comparison & Leaderboard
+### Phase 4 — Dimensionality Reduction (PCA / t-SNE)
+
+- [x]  Extract fc1 features (256-dim) via forward hook for all test sets
+- [x]  PCA and t-SNE scatter plots for synthetic test set, logged to W&B
+- [x]  PCA and t-SNE scatter plots for real test set (if provided)
+- [x]  Noise separation visualization: combined ID + noise latent space (PCA + t-SNE)
+
+### Phase 5 — OOD Noise Evaluation
+
+- [x]  Load noise samples from `--noise-dir` with truncation + bandpass + decimation
+- [x]  MSP (Max Softmax Probability) scoring
+- [x]  Energy score (`-logsumexp(logits)`)
+- [x]  ODIN (temperature scaling + input perturbation, T=1000, ε=0.0012)
+- [x]  Mahalanobis distance (multi-layer: pool1, pool2, pool3, fc1 with GAP, class-conditional Gaussian, tied covariance)
+- [x]  Temperature scaling sweep (T ∈ [1, 2, 5, 10, 50, 100, 500, 1000]) for MSP and Energy
+- [x]  Energy_tuned: re-evaluation with optimal temperature from sweep
+- [x]  AUROC, FPR@95, AUPR for all methods
+- [x]  Score distribution histograms (ID vs noise) for all methods
+- [x]  Overlaid ROC curves comparison across methods
+- [x]  Threshold analysis with operating points table (TPR=90%, 95%, 99%)
+- [x]  Per-class OOD analysis (AUROC per class vs noise using MSP)
+- [x]  Silhouette score for latent space separability (ID vs noise)
+- [x]  Prediction distribution on noise (class assignment bar chart)
+- [x]  Summary table logged to W&B (all methods × all metrics)
+
+### Future — Comparison & Reporting
 
 - [ ]  Use **Run Comparer** to diff top models
 - [ ]  Use **Grouping** (by model name) to see averaged curves
 - [ ]  Create scatter plots: accuracy vs training time, accuracy vs model size
 - [ ]  Build a summary `wandb.Table` as leaderboard (all models × all datasets × key metrics)
-
-### Phase 5 — Reporting
-
 - [ ]  Create a **W&B Report** per dataset and one global summary
-- [ ]  Embed: leaderboard table, loss curves, confusion matrices, scatter plots
-- [ ]  Add analysis text and conclusions
 - [ ]  Export as PDF if needed
 
 ---

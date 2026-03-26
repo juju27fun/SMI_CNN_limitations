@@ -77,6 +77,15 @@ class Decimate:
         return signal
 
 
+class Truncate:
+    """Truncate signal to a fixed length (from the beginning)."""
+    def __init__(self, length: int):
+        self.length = length
+
+    def __call__(self, signal: torch.Tensor) -> torch.Tensor:
+        return signal[..., :self.length]
+
+
 class Conv1DClassifier(nn.Module):
     """1D Convolutional classifier for particle signals."""
     
@@ -286,25 +295,28 @@ def main():
     
     class_names = ["2um", "4um", "10um"]
 
+    run_name = f"Conv1D-{data_dir.name}-train"
+    args.output_dir = str(Path(args.output_dir) / run_name)
+
     bandpass = BandpassFilter(low_cutoff_khz=5.0, high_cutoff_khz=100.0, sample_rate_mhz=2.0)
     decimate = Decimate(decimate=args.decimate)
 
     train_dataset = ParticleDataset(data_dir / "train", class_names, transforms=[bandpass, decimate])
     test_dataset = ParticleDataset(data_dir / "test", class_names, transforms=[bandpass, decimate])
-    
+
     val_size = int(len(train_dataset) * args.val_split)
     train_size = len(train_dataset) - val_size
     train_subset, val_subset = torch.utils.data.random_split(
         train_dataset, [train_size, val_size],
         generator=torch.Generator().manual_seed(args.seed)
     )
-    
+
     print(f"Dataset sizes - Train: {train_size}, Val: {val_size}, Test: {len(test_dataset)}")
-    
+
     train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=4)
     val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, num_workers=4)
     test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    
+
     run_training(args, device, class_names, train_loader, val_loader, test_loader)
 
 

@@ -30,6 +30,12 @@ python benchmark.py --data-dir dataset
 # With real test set (measures generalization gap)
 python benchmark.py --data-dir dataset --real-test-dir dataset_real/test
 
+# With noise samples for OOD evaluation
+python benchmark.py --data-dir dataset --noise-dir Noise
+
+# Full benchmark: synthetic + real test + OOD noise
+python benchmark.py --data-dir dataset --real-test-dir dataset_real/test --noise-dir Noise
+
 # Custom hyperparameters and early stopping
 python benchmark.py --data-dir dataset --epochs 200 --lr 1e-3 --patience 20
 
@@ -40,7 +46,7 @@ python benchmark.py --data-dir dataset --scheduler plateau
 # Offline W&B mode (no internet required)
 python benchmark.py --data-dir dataset --wandb-offline
 ```
-The benchmark runs in 3 phases: pre-training config logging, training loop with per-epoch metrics, and post-training evaluation (confusion matrix, F1 per class, PR/ROC curves). All metrics are logged to the W&B project `particle-benchmark`. See `Benchmarking.md` for the full W&B reference guide.
+The benchmark runs in 5 phases: (1) pre-training config logging, (2) training loop with per-epoch metrics, (3) post-training evaluation (confusion matrix, F1 per class, PR/ROC curves), (4) dimensionality reduction (PCA / t-SNE latent space visualizations), and (5) OOD noise evaluation (MSP, Energy, ODIN, Mahalanobis — AUROC, FPR@95, score histograms, ROC comparison). Phases 4–5 require `--noise-dir`. All metrics are logged to the W&B project `particle-benchmark`. See `Benchmarking.md` for the full W&B reference guide.
 
 # Dataset Generation Interface
 Launch the Streamlit UI to configure and generate OFI particle signal datasets:
@@ -78,11 +84,23 @@ python fix_leaks.py --dataset-root /path/to/dataset --reports-dir /path/to/leak_
 ```
 This script reads the reports from the reports directory, removes the offending files, and copies replacement files that don't introduce new leaks. After running it, re-run `dataset_leaks.py` to verify the dataset is clean.
 
-# Full Analysis Pipeline
-Run the complete analysis pipeline (leak detection, noise analysis, training & benchmarking) in one command:
+# Dataset Audit (batch leak + noise analysis)
+Run leak detection and noise analysis on **all** datasets at once. Already-processed datasets are skipped automatically (tracked via `audit_manifest.json`):
 ```bash
-python run_full_analysis.py dataset
-python run_full_analysis.py dataset --dataset-name synthetic_v2 --epochs 100
-python run_full_analysis.py dataset --real-test-dir dataset_real/test --wandb-offline
+# Process all datasets found in the project directory
+python run_dataset_audit.py
+
+# Preview what would be processed without running anything
+python run_dataset_audit.py --dry-run
+
+# Force re-processing of all datasets
+python run_dataset_audit.py --force
+
+# Process only specific datasets
+python run_dataset_audit.py --datasets dataset_f1 dataset_nof1
 ```
-This orchestrates `dataset_leaks.py`, `analyze_noise.py` (once per class per split), and `benchmark.py` sequentially. If critical leaks are detected, the pipeline aborts before training. All local results are saved to a `<dataset_name>_full_analysis/` folder containing leak reports, noise analysis PDFs, model checkpoints, and a summary report. Training metrics are logged to W&B as usual.
+The script auto-discovers two kinds of directories:
+- **Split datasets** (containing `train/` + `test/`): runs leak detection + noise analysis per split/class
+- **Standalone noise folders** (containing `.npy` files directly, e.g. `Noise/`): runs noise analysis only
+
+Results are saved to `audit_results/<dataset_name>/` with leak reports, noise PDFs, and a summary. If a dataset is modified (files added/removed), it will be re-processed on the next run.
