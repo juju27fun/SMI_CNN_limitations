@@ -9,6 +9,7 @@ dataset_*/
 
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 
@@ -25,6 +26,7 @@ leak_reports/
 *_Noise_Analysis.pdf
 audit_results/
 audit_manifest.json
+temporary_report.md
 dataset_f1/
 dataset_nof1/
 S0_baseline/
@@ -38,3 +40,4 @@ S7_pure_real/
 S8_colored_low/
 S9_colored_high/
 S_union/
+S10_white_strong/

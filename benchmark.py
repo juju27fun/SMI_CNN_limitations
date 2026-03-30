@@ -325,13 +325,17 @@ def compute_mahalanobis_scores(model, id_loader, noise_loader, device, train_loa
             class_means.append(ref_feats[mask].mean(axis=0))
         class_means_arr = np.stack(class_means)
 
-        # Tied (shared) covariance matrix
-        centered = ref_feats - class_means_arr[ref_labels.astype(int)]
+        # Tied (shared) covariance matrix with regularization
+        centered = ref_feats.astype(np.float64) - class_means_arr[ref_labels.astype(int)]
         cov = np.cov(centered, rowvar=False)
-        cov_inv = np.linalg.pinv(cov)
+        # Regularize for numerical stability (critical for large datasets)
+        reg = max(1e-6, 1e-6 * np.trace(cov) / cov.shape[0])
+        cov += reg * np.eye(cov.shape[0])
+        cov_inv = np.linalg.inv(cov)
 
         # Negative Mahalanobis distance to nearest class centroid
-        for feats, accum in [(id_feats, "id"), (noise_feats, "noise")]:
+        for feats, accum in [(id_feats.astype(np.float64), "id"),
+                             (noise_feats.astype(np.float64), "noise")]:
             scores = np.full(len(feats), -np.inf)
             for c in range(num_classes):
                 diff = feats - class_means_arr[c]
@@ -488,17 +492,17 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     ]
     def _safe_bins(vals, target=50):
         """Return bin count that won't fail on constant-valued arrays."""
-        if len(vals) == 0 or np.ptp(vals) == 0:
+        if len(vals) == 0 or np.ptp(vals) < 1e-10:
             return 1
-        return target
+        return min(target, max(1, int(np.sqrt(len(vals)))))
 
     for label, id_vals, noise_vals, xlabel, key in hist_configs:
         m = methods[label]
         fig, ax = plt.subplots(figsize=(8, 5))
         ax.hist(id_vals, bins=_safe_bins(id_vals), alpha=0.6,
-                label=f"In-dist (n={n_id})", color="#4C72B0", density=True)
+                label=f"In-dist (n={n_id})", color="#1f77b4", density=True)
         ax.hist(noise_vals, bins=_safe_bins(noise_vals), alpha=0.6,
-                label=f"Noise (n={n_noise})", color="#C44E52", density=True)
+                label=f"Noise (n={n_noise})", color="#d62728", density=True)
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Density")
         ax.set_title(f"{label} Distribution (AUROC={m['auroc']:.3f})")
@@ -508,7 +512,7 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
 
     # Prediction distribution bar chart
     fig, ax = plt.subplots(figsize=(8, 5))
-    bar_colors = ["#4C72B0", "#55A868", "#DD8452"]
+    bar_colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
     bars = ax.bar(class_names, noise_class_pcts,
                   color=bar_colors[:len(class_names)], edgecolor="white")
     for bar, pct in zip(bars, noise_class_pcts):
@@ -557,10 +561,10 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
 
     # Temperature sweep plot
     fig, ax = plt.subplots(figsize=(8, 5))
-    ax.plot(temperatures, msp_aurocs_t, "o-", label="MSP", color="#4C72B0")
-    ax.plot(temperatures, energy_aurocs_t, "s-", label="Energy", color="#55A868")
-    ax.axvline(best_T_msp, color="#4C72B0", linestyle="--", alpha=0.4)
-    ax.axvline(best_T_energy, color="#55A868", linestyle="--", alpha=0.4)
+    ax.plot(temperatures, msp_aurocs_t, "o-", label="MSP", color="#1f77b4")
+    ax.plot(temperatures, energy_aurocs_t, "s-", label="Energy", color="#ff7f0e")
+    ax.axvline(best_T_msp, color="#1f77b4", linestyle="--", alpha=0.4)
+    ax.axvline(best_T_energy, color="#ff7f0e", linestyle="--", alpha=0.4)
     ax.set_xscale("log")
     ax.set_xlabel("Temperature (T)")
     ax.set_ylabel("AUROC")
@@ -596,9 +600,9 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
         # Histogram
         fig, ax = plt.subplots(figsize=(8, 5))
         ax.hist(energy_tuned_id, bins=_safe_bins(energy_tuned_id), alpha=0.6,
-                label=f"In-dist (n={n_id})", color="#4C72B0", density=True)
+                label=f"In-dist (n={n_id})", color="#1f77b4", density=True)
         ax.hist(energy_tuned_noise, bins=_safe_bins(energy_tuned_noise), alpha=0.6,
-                label=f"Noise (n={n_noise})", color="#C44E52", density=True)
+                label=f"Noise (n={n_noise})", color="#d62728", density=True)
         ax.set_xlabel(f"Energy Score (T={best_T_energy})")
         ax.set_ylabel("Density")
         ax.set_title(f"Energy Tuned Distribution (AUROC={et['auroc']:.3f})")
@@ -609,8 +613,8 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     # --- Overlaid ROC curves for all methods ---
     print("  [noise_ood] Plotting ROC curves comparison...")
     method_colors = {
-        "MSP": "#4C72B0", "Energy": "#55A868", "ODIN": "#DD8452",
-        "Mahalanobis": "#C44E52", "Energy_tuned": "#8172B2",
+        "MSP": "#1f77b4", "Energy": "#ff7f0e", "ODIN": "#2ca02c",
+        "Mahalanobis": "#d62728", "Energy_tuned": "#9467bd",
     }
     fig, ax = plt.subplots(figsize=(8, 6))
     for name, m in methods.items():
@@ -660,10 +664,10 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     # Threshold analysis plot
     fig, ax1 = plt.subplots(figsize=(8, 5))
     ax1.plot(thresholds, tpr_curve[:-1] if len(tpr_curve) > len(thresholds) else tpr_curve,
-             label="TPR (ID recall)", color="#4C72B0")
+             label="TPR (ID recall)", color="#1f77b4")
     nr_plot = noise_rejection[:-1] if len(noise_rejection) > len(thresholds) else noise_rejection
     ax1.plot(thresholds, nr_plot,
-             label="Noise rejected", color="#C44E52")
+             label="Noise rejected", color="#d62728")
     ax1.set_xlabel(f"Threshold ({best_method} score)")
     ax1.set_ylabel("Rate")
     ax1.set_title(f"Threshold Analysis ({best_method}, AUROC={methods[best_method]['auroc']:.3f})")
@@ -831,6 +835,126 @@ def plot_dimensionality_reduction(features, labels, class_names, prefix):
     ax.legend()
 
     return pca_fig, tsne_fig
+
+
+# ──────────────────────────────────────────────
+# Phase 6 : Cluster distances
+# ──────────────────────────────────────────────
+def cosine_distance(a, b):
+    """Cosine distance between two vectors: 1 - cos(theta) in [0, 2]."""
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a < 1e-10 or norm_b < 1e-10:
+        return float("nan")
+    return float(1.0 - np.dot(a, b) / (norm_a * norm_b))
+
+
+def compute_distance_matrix(centroids):
+    """Compute the full pairwise cosine distance matrix between centroids."""
+    n = len(centroids)
+    mat = np.zeros((n, n))
+    for i in range(n):
+        for j in range(i):
+            d = cosine_distance(centroids[i], centroids[j])
+            mat[i, j] = d
+            mat[j, i] = d
+    return mat
+
+
+def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
+                                    class_names, dataset_name):
+    """Compute pairwise cosine distances between cluster centroids and log to W&B.
+
+    Uses pre-extracted fc1 features (256-dim) to compute centroids for each particle
+    class plus noise, then logs a lower-triangular table, scalar summaries, and a heatmap.
+    """
+    cluster_names = class_names + ["Noise"]
+    n = len(cluster_names)
+
+    # Compute per-cluster centroids
+    centroids = []
+    for c, cls in enumerate(class_names):
+        mask = test_labels == c
+        n_samples = int(mask.sum())
+        if n_samples == 0:
+            print(f"  WARNING: no samples for class {cls}, using zero centroid")
+            centroids.append(np.zeros(test_feats.shape[1]))
+        else:
+            centroids.append(test_feats[mask].mean(axis=0))
+        print(f"  [cluster_distances] Centroid {cls:5s}: {n_samples} samples")
+
+    noise_centroid = noise_feats.mean(axis=0)
+    centroids.append(noise_centroid)
+    print(f"  [cluster_distances] Centroid Noise: {len(noise_feats)} samples")
+
+    # Compute distance matrix
+    mat = compute_distance_matrix(centroids)
+
+    # Pretty-print lower triangle
+    print(f"\n  Cosine distance matrix (lower triangle):")
+    header = f"  {'':10s}" + "".join(f"{name:10s}" for name in cluster_names)
+    print(header)
+    for i, row_name in enumerate(cluster_names):
+        row_str = f"  {row_name:10s}"
+        for j in range(i + 1):
+            row_str += f"{mat[i, j]:10.4f}"
+        print(row_str)
+
+    # ── W&B Table (lower-triangular) ──
+    columns = ["cluster"] + cluster_names
+    rows = []
+    for i, row_name in enumerate(cluster_names):
+        row = [row_name]
+        for j in range(n):
+            if j < i:
+                row.append(round(float(mat[i, j]), 4))
+            elif j == i:
+                row.append(0.0)
+            else:
+                row.append(None)
+        rows.append(row)
+
+    run.log({
+        "cluster_distances/cosine_distance_table": wandb.Table(
+            columns=columns, data=rows
+        )
+    })
+
+    # ── Scalar summary entries for each pairwise distance ──
+    for i in range(n):
+        for j in range(i):
+            key = f"cluster_distances/cosine_{cluster_names[i].lower()}_vs_{cluster_names[j].lower()}"
+            run.summary[key] = round(float(mat[i, j]), 4)
+
+    # ── Heatmap ──
+    display = mat.copy()
+    masked = np.ma.array(display, mask=np.isnan(display))
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    cmap = plt.cm.YlOrRd.copy()
+    cmap.set_bad("white")
+
+    im = ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="auto")
+    plt.colorbar(im, ax=ax, label="Cosine distance")
+
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(cluster_names, rotation=45, ha="right")
+    ax.set_yticklabels(cluster_names)
+    ax.set_title(f"Cluster Cosine Distances — {dataset_name}")
+
+    for i in range(n):
+        for j in range(n):
+            val = display[i, j]
+            if not np.isnan(val):
+                text_color = "white" if val > 0.55 else "black"
+                ax.text(j, i, f"{val:.3f}", ha="center", va="center",
+                        fontsize=9, color=text_color)
+
+    fig.tight_layout()
+    run.log({"cluster_distances/cosine_distance_heatmap": wandb.Image(fig)})
+    plt.close(fig)
+    print("  [cluster_distances] Table, scalars, and heatmap logged to W&B")
 
 
 # ──────────────────────────────────────────────
@@ -1066,14 +1190,17 @@ def main():
             print("  [test_real] PCA and t-SNE logged to W&B")
 
         # Noise separation visualization
+        noise_test_feats = None
+        noise_test_labels = None
+        noise_feats = None
         if noise_loader is not None:
             print("\n  Noise OOD separation analysis...")
-            test_features, test_labels = extract_features(model, test_loader, device)
-            noise_features, _ = extract_features(model, noise_loader, device)
+            noise_test_feats, noise_test_labels = extract_features(model, test_loader, device)
+            noise_feats, _ = extract_features(model, noise_loader, device)
 
-            combined_features = np.concatenate([test_features, noise_features])
-            noise_labels = np.full(len(noise_features), len(class_names))
-            combined_labels = np.concatenate([test_labels, noise_labels])
+            combined_features = np.concatenate([noise_test_feats, noise_feats])
+            noise_labels = np.full(len(noise_feats), len(class_names))
+            combined_labels = np.concatenate([noise_test_labels, noise_labels])
             combined_names = class_names + ["Noise"]
 
             pca_fig, tsne_fig = plot_dimensionality_reduction(
@@ -1095,6 +1222,16 @@ def main():
             run_ood_evaluation(
                 run, model, test_loader, noise_loader, device, class_names,
                 train_loader=train_loader,
+            )
+
+        # ── Phase 6 : Cluster Distances ──
+        if noise_loader is not None:
+            print("\n" + "=" * 60)
+            print("PHASE 6 : Cluster Distances")
+            print("=" * 60)
+            run_cluster_distance_evaluation(
+                run, noise_test_feats, noise_test_labels, noise_feats,
+                class_names, dataset_name=args.dataset_name,
             )
 
         print("\n" + "=" * 60)

@@ -25,7 +25,7 @@ import shutil
 import glob as glob_mod
 
 import numpy as np
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, sosfiltfilt
 from scipy.special import erf
 from tqdm import tqdm
 
@@ -106,8 +106,17 @@ def generate_colored_noise(n_samples, rng, sigma, fs):
     """Generate colored noise with shaped PSD (70% power 1–10 kHz, 30% 10–80 kHz)."""
     white1 = rng.normal(0, 1.0, n_samples)
     white2 = rng.normal(0, 1.0, n_samples)
-    low  = bandpass_filter(white1, lowcut=1000,  highcut=10000, order=4, fs=fs)
-    high = bandpass_filter(white2, lowcut=10000, highcut=80000, order=4, fs=fs)
+    sos_low  = butter(4, [1000, 10000],  btype='band', fs=fs, output='sos')
+    sos_high = butter(4, [10000, 80000], btype='band', fs=fs, output='sos')
+    low  = sosfiltfilt(sos_low, white1)
+    high = sosfiltfilt(sos_high, white2)
+    # Normalize each band to unit variance so sqrt weights control power split
+    std_low = np.std(low)
+    std_high = np.std(high)
+    if std_low > 0:
+        low = low / std_low
+    if std_high > 0:
+        high = high / std_high
     colored = np.sqrt(0.7) * low + np.sqrt(0.3) * high
     std = np.std(colored)
     if std > 0:
