@@ -1,14 +1,14 @@
-"""Benchmark pipeline for particle classification.
+"""Training pipeline for 4-class particle classification (2um, 4um, 10um, Noise).
 
-Wraps the training loop with structured W&B metric logging,
-evaluates on both synthetic and real test sets.
+Supports all models from the model zoo via --model flag and logs
+structured metrics to W&B.
 
 Usage:
-    python benchmark.py --data-dir dataset --real-test-dir dataset_real/test
-    python benchmark.py --data-dir dataset  # without real test set
+    python train4classes.py --data-dir S1_white_4c --epochs 150 --wandb-offline
+    python train4classes.py --model ResNet1D --data-dir S1_white_4c --epochs 150
+    python train4classes.py --model InceptionTime1D --data-dir S2_colored_4c --epochs 150
 """
 
-import time
 import argparse
 from pathlib import Path
 
@@ -16,235 +16,101 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import seaborn as sns
 import wandb
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from scipy.special import logsumexp
-from sklearn.metrics import (classification_report, roc_auc_score, roc_curve,
-                             silhouette_score, average_precision_score)
+from sklearn.metrics import (classification_report, confusion_matrix, roc_auc_score,
+                             roc_curve, silhouette_score, average_precision_score)
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
 from train import (
     RAW_SIGNAL_LENGTH,
     ParticleDataset,
-    Conv1DClassifier,
     BandpassFilter,
     Decimate,
     Truncate,
-    train_one_epoch,
+    GaussianNoise,
+    TimeShift,
+    AmplitudeScale,
     evaluate,
 )
+from models import create_model
+from training_utils import (
+    compute_model_macs,
+    measure_inference_latency,
+    run_training_loop,
+    run_post_testing,
+    create_optimizer,
+    create_scheduler,
+    add_common_training_args,
+)
 
-
-
-# ──────────────────────────────────────────────
-# Phase 1 : Pre-training logging
-# ──────────────────────────────────────────────
-def log_pre_training(run, num_params, args, train_size, val_size, class_names):
-    """Log all pre-training parameters to W&B and stdout."""
-    print("=" * 60)
-    print("PHASE 1 : Pre-training parameters")
-    print("=" * 60)
-    print(f"  Model:            Conv1DClassifier")
-    print(f"  Model size:       {num_params:,} trainable params")
-    print(f"  Dataset:          {args.dataset_name}")
-    print(f"  Dataset size:     {train_size} train + {val_size} val")
-    print(f"  Epochs:           {args.epochs}")
-    print(f"  Batch size:       {args.batch_size}")
-    print(f"  Learning rate:    {args.lr}")
-    print(f"  Optimizer:        Adam (weight_decay=1e-4)")
-    print(f"  LR scheduler:     {args.scheduler}")
-    print(f"  Decimation:       {args.decimate}x")
-    print(f"  Input length:     {RAW_SIGNAL_LENGTH // args.decimate}")
-    print(f"  Classes:          {class_names}")
-    print(f"  Convergence thr:  {args.convergence_threshold:.0%}")
-    print("=" * 60)
-
-    run.summary["model_size_params"] = num_params
-    run.summary["dataset_size"] = train_size
+CLASS_NAMES = ["2um", "4um", "10um", "Noise"]
+PARTICLE_NAMES = ["2um", "4um", "10um"]  # For 3-class comparison
 
 
 # ──────────────────────────────────────────────
-# Phase 2 : Training loop with metrics
+# Feature extraction and visualization
 # ──────────────────────────────────────────────
-def run_training_loop(run, model, train_loader, val_loader, criterion, optimizer,
-                      device, args, output_dir, scheduler=None):
-    """Full training loop with per-epoch W&B logging.
+def extract_features(model, loader, device):
+    """Extract penultimate-layer features from the model for all samples.
 
-    Returns: (best_val_acc, best_epoch, total_time, convergence_time)
+    Hooks into model.feature_layer (all zoo models expose this attribute).
     """
-    best_val_acc = 0.0
-    best_epoch = 0
-    convergence_time = None
-    epochs_without_improvement = 0
-    val_acc = 0.0
-    val_loss = float("nan")
-    total_start = time.time()
+    model.eval()
+    all_labels = []
+    activations = []
 
-    print("\n" + "=" * 60)
-    print("PHASE 2 : Training")
-    print("=" * 60)
+    def hook_fn(m, inp, out):
+        activations.append(out.detach().cpu())
 
-    for epoch in range(args.epochs):
-        epoch_start = time.time()
+    hook = model.feature_layer.register_forward_hook(hook_fn)
 
-        train_loss, train_acc = train_one_epoch(
-            model, train_loader, criterion, optimizer, device
-        )
-        val_loss, val_acc, _, _, _ = evaluate(
-            model, val_loader, criterion, device
-        )
-        epoch_time = time.time() - epoch_start
+    with torch.no_grad():
+        for signals, labels in loader:
+            signals = signals.to(device)
+            model(signals)
+            all_labels.extend(labels.numpy())
 
-        current_lr = optimizer.param_groups[0]["lr"]
+    hook.remove()
+    features = torch.cat(activations, dim=0).numpy()
+    return features, np.array(all_labels)
 
-        # W&B per-epoch log
-        run.log({
-            "epoch": epoch,
-            "train/loss": train_loss,
-            "train/accuracy": train_acc,
-            "val/loss": val_loss,
-            "val/accuracy": val_acc,
-            "epoch_time_sec": epoch_time,
-            "learning_rate": current_lr,
-        })
 
-        # Step the learning rate scheduler
-        if scheduler is not None:
-            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                scheduler.step(val_acc)
-            else:
-                scheduler.step()
+def plot_dimensionality_reduction(features, labels, class_names, prefix):
+    """Generate PCA and t-SNE scatter plots colored by class. Returns (pca_fig, tsne_fig)."""
+    pca = PCA(n_components=2)
+    pca_result = pca.fit_transform(features)
 
-        # Track best
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
-            best_epoch = epoch
-            epochs_without_improvement = 0
-            run.summary["best_val_accuracy"] = best_val_acc
-            run.summary["best_epoch"] = best_epoch
-            torch.save(model.state_dict(), output_dir / "best_model.pth")
-        else:
-            epochs_without_improvement += 1
+    pca_fig, ax = plt.subplots(figsize=(8, 6))
+    for i, cls in enumerate(class_names):
+        mask = labels == i
+        ax.scatter(pca_result[mask, 0], pca_result[mask, 1], label=cls, alpha=0.6, s=15)
+    ax.set_title(f"PCA - {prefix}")
+    ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%})")
+    ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%})")
+    ax.legend()
 
-        # Track convergence
-        if convergence_time is None and val_acc >= args.convergence_threshold:
-            convergence_time = time.time() - total_start
-            run.summary["convergence_time_sec"] = convergence_time
+    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
+    tsne_result = tsne.fit_transform(features)
 
-        if (epoch + 1) % 10 == 0 or epoch == 0:
-            print(
-                f"  Epoch {epoch + 1:3d}/{args.epochs} | "
-                f"Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.4f} | "
-                f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | "
-                f"Time: {epoch_time:.1f}s"
-            )
+    tsne_fig, ax = plt.subplots(figsize=(8, 6))
+    for i, cls in enumerate(class_names):
+        mask = labels == i
+        ax.scatter(tsne_result[mask, 0], tsne_result[mask, 1], label=cls, alpha=0.6, s=15)
+    ax.set_title(f"t-SNE - {prefix}")
+    ax.set_xlabel("t-SNE 1")
+    ax.set_ylabel("t-SNE 2")
+    ax.legend()
 
-        # Early stopping
-        if args.patience > 0 and epochs_without_improvement >= args.patience:
-            print(f"  Early stopping at epoch {epoch + 1} (no improvement for {args.patience} epochs)")
-            run.summary["early_stopped_epoch"] = epoch
-            break
-
-    total_time = time.time() - total_start
-
-    # Summary
-    run.summary["total_training_time_sec"] = total_time
-    run.summary["final_val_accuracy"] = val_acc
-    run.summary["final_val_loss"] = val_loss
-    if convergence_time is None:
-        run.summary["convergence_time_sec"] = float("nan")  # never converged
-
-    print("-" * 60)
-    print(f"  Best val accuracy: {best_val_acc:.4f} (epoch {best_epoch + 1})")
-    print(f"  Total training time: {total_time:.1f}s")
-    if convergence_time is not None:
-        print(f"  Convergence time ({args.convergence_threshold:.0%}): {convergence_time:.1f}s")
-    else:
-        print(f"  Convergence ({args.convergence_threshold:.0%}): NOT REACHED")
-
-    return best_val_acc, best_epoch, total_time, convergence_time
+    return pca_fig, tsne_fig
 
 
 # ──────────────────────────────────────────────
-# Phase 3 : Post-training full evaluation
-# ──────────────────────────────────────────────
-def run_post_evaluation(run, model, loader, criterion, device, class_names, prefix):
-    """Run full evaluation on a test set and log everything to W&B.
-
-    Args:
-        prefix: metric namespace, e.g. "test_synthetic" or "test_real"
-    """
-    print(f"\n  [{prefix}] Running evaluation...")
-    loss, acc, y_pred, y_true, y_proba = evaluate(model, loader, criterion, device)
-
-    print(f"  [{prefix}] Loss: {loss:.4f} | Accuracy: {acc:.4f}")
-
-    # Summary scalars
-    run.summary[f"{prefix}/accuracy"] = acc
-    run.summary[f"{prefix}/loss"] = loss
-
-    # Confusion matrix
-    cm = wandb.plot.confusion_matrix(
-        y_true=y_true.tolist(),
-        preds=y_pred.tolist(),
-        class_names=class_names,
-    )
-    run.log({f"{prefix}/confusion_matrix": cm})
-
-    # Classification report
-    report = classification_report(
-        y_true, y_pred, target_names=class_names, output_dict=True
-    )
-    print(f"  [{prefix}] Classification Report:")
-    print(classification_report(y_true, y_pred, target_names=class_names, digits=4))
-
-    # F1 per class table
-    rows = []
-    for cls in class_names:
-        rows.append([
-            cls,
-            round(report[cls]["precision"], 4),
-            round(report[cls]["recall"], 4),
-            round(report[cls]["f1-score"], 4),
-            int(report[cls]["support"]),
-        ])
-    run.log({
-        f"{prefix}/f1_per_class": wandb.Table(
-            columns=["Class", "Precision", "Recall", "F1", "Support"],
-            data=rows,
-        )
-    })
-
-    # F1 bar chart
-    f1_data = [[cls, report[cls]["f1-score"]] for cls in class_names]
-    f1_table = wandb.Table(data=f1_data, columns=["class", "f1"])
-    run.log({
-        f"{prefix}/f1_bar_chart": wandb.plot.bar(
-            f1_table, "class", "f1", title=f"F1 per Class ({prefix})"
-        )
-    })
-
-    # PR curve
-    run.log({
-        f"{prefix}/pr_curve": wandb.plot.pr_curve(
-            y_true.tolist(), y_proba.tolist(), labels=class_names
-        )
-    })
-
-    # ROC curve
-    run.log({
-        f"{prefix}/roc_curve": wandb.plot.roc_curve(
-            y_true.tolist(), y_proba.tolist(), labels=class_names
-        )
-    })
-
-    return acc, loss
-
-
-# ──────────────────────────────────────────────
-# OOD Noise Evaluation
+# OOD scoring functions
 # ──────────────────────────────────────────────
 def compute_ood_scores(model, loader, device):
     """Forward pass without ground truth. Returns (logits, probas, preds)."""
@@ -274,21 +140,17 @@ def compute_odin_scores(model, loader, device, temperature=1000.0, epsilon=0.001
     for signals, _ in loader:
         signals = signals.to(device).requires_grad_(True)
 
-        # Forward pass with gradients
         outputs = model(signals)
         scaled = outputs / temperature
         log_soft = torch.log_softmax(scaled, dim=1)
         max_log_soft, _ = log_soft.max(dim=1)
         loss = max_log_soft.sum()
 
-        # Gradient w.r.t. input
         loss.backward()
         gradient = signals.grad.data
 
-        # Perturb input in the direction that increases confidence
         perturbed = signals.data - epsilon * gradient.sign()
 
-        # Second forward pass on perturbed input (no grad)
         with torch.no_grad():
             outputs_p = model(perturbed)
             scores = torch.softmax(outputs_p / temperature, dim=1).max(dim=1)[0]
@@ -300,53 +162,44 @@ def compute_odin_scores(model, loader, device, temperature=1000.0, epsilon=0.001
 
 
 def compute_mahalanobis_scores(model, id_loader, noise_loader, device, train_loader=None):
-    """Multi-layer Mahalanobis distance OOD detector (Lee et al., 2018).
+    """Single-layer Mahalanobis distance OOD detector using model.feature_layer.
 
-    Computes class-conditional Gaussian at each layer (pool1, pool2, pool3, fc1)
-    using global average pooling for conv layers. Final score is the sum across
-    all 4 layers, following the ensemble approach from the original paper.
+    Uses the penultimate feature layer (model.feature_layer) for all zoo models.
     Returns (id_scores, noise_scores) where higher = more in-distribution.
     """
     ref_loader = train_loader if train_loader is not None else id_loader
 
-    ref_layers, ref_labels = extract_multilayer_features(model, ref_loader, device)
-    id_layers, _ = extract_multilayer_features(model, id_loader, device)
-    noise_layers, _ = extract_multilayer_features(model, noise_loader, device)
+    ref_feats, ref_labels = extract_features(model, ref_loader, device)
+    id_feats, _ = extract_features(model, id_loader, device)
+    noise_feats, _ = extract_features(model, noise_loader, device)
 
     num_classes = int(ref_labels.max()) + 1
-    id_total = np.zeros(len(id_layers[0]))
-    noise_total = np.zeros(len(noise_layers[0]))
 
-    for ref_feats, id_feats, noise_feats in zip(ref_layers, id_layers, noise_layers):
-        # Class-conditional means
-        class_means = []
-        for c in range(num_classes):
-            mask = ref_labels == c
-            class_means.append(ref_feats[mask].mean(axis=0))
-        class_means_arr = np.stack(class_means)
+    # Class-conditional means
+    class_means = []
+    for c in range(num_classes):
+        mask = ref_labels == c
+        class_means.append(ref_feats[mask].mean(axis=0))
+    class_means_arr = np.stack(class_means)
 
-        # Tied (shared) covariance matrix with regularization
-        centered = ref_feats.astype(np.float64) - class_means_arr[ref_labels.astype(int)]
-        cov = np.cov(centered, rowvar=False)
-        # Regularize for numerical stability (critical for large datasets)
-        reg = max(1e-6, 1e-6 * np.trace(cov) / cov.shape[0])
-        cov += reg * np.eye(cov.shape[0])
-        cov_inv = np.linalg.inv(cov)
+    # Tied (shared) covariance matrix with regularization
+    centered = ref_feats.astype(np.float64) - class_means_arr[ref_labels.astype(int)]
+    cov = np.cov(centered, rowvar=False)
+    reg = max(1e-6, 1e-6 * np.trace(cov) / cov.shape[0])
+    cov += reg * np.eye(cov.shape[0])
+    cov_inv = np.linalg.inv(cov)
 
-        # Negative Mahalanobis distance to nearest class centroid
-        for feats, accum in [(id_feats.astype(np.float64), "id"),
-                             (noise_feats.astype(np.float64), "noise")]:
-            scores = np.full(len(feats), -np.inf)
-            for c in range(num_classes):
-                diff = feats - class_means_arr[c]
-                maha = -np.sum(diff @ cov_inv * diff, axis=1)  # -d^2
-                scores = np.maximum(scores, maha)
-            if accum == "id":
-                id_total += scores
-            else:
-                noise_total += scores
+    # Negative Mahalanobis distance to nearest class centroid
+    id_scores = np.full(len(id_feats), -np.inf)
+    noise_scores = np.full(len(noise_feats), -np.inf)
+    for c in range(num_classes):
+        for feats, scores in [(id_feats.astype(np.float64), id_scores),
+                              (noise_feats.astype(np.float64), noise_scores)]:
+            diff = feats - class_means_arr[c]
+            maha = -np.sum(diff @ cov_inv * diff, axis=1)
+            np.maximum(scores, maha, out=scores)
 
-    return id_total, noise_total
+    return id_scores, noise_scores
 
 
 def _compute_fpr_at_tpr(labels, scores, tpr_target=0.95):
@@ -358,10 +211,17 @@ def _compute_fpr_at_tpr(labels, scores, tpr_target=0.95):
     return float(fpr[idx])
 
 
+def _safe_bins(vals, target=50):
+    """Return bin count that won't fail on constant-valued arrays."""
+    if len(vals) == 0 or np.ptp(vals) < 1e-10:
+        return 1
+    return min(target, max(1, int(np.sqrt(len(vals)))))
+
+
 def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
                        train_loader=None):
     """Quantitative OOD evaluation with 5 methods: MSP, Energy, ODIN,
-    Mahalanobis (multi-layer), and Energy_tuned (optimal temperature from sweep).
+    Mahalanobis (single-layer via feature_layer), and Energy_tuned.
 
     Compares in-distribution test samples vs noise samples and logs
     all metrics and visualizations to W&B under the noise_ood prefix.
@@ -383,7 +243,7 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     energy_id = -logsumexp(id_logits, axis=1)
     energy_noise = -logsumexp(noise_logits, axis=1)
 
-    # Entropy: -sum(p * log(p)) for both ID and noise
+    # Entropy
     eps = 1e-8
     entropy_id = -np.sum(id_probas * np.log(id_probas + eps), axis=1)
     entropy_noise = -np.sum(noise_probas * np.log(noise_probas + eps), axis=1)
@@ -490,11 +350,6 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
         ("ODIN", odin_id, odin_noise, "ODIN Score", "odin"),
         ("Mahalanobis", maha_id, maha_noise, "Mahalanobis Score", "mahalanobis"),
     ]
-    def _safe_bins(vals, target=50):
-        """Return bin count that won't fail on constant-valued arrays."""
-        if len(vals) == 0 or np.ptp(vals) < 1e-10:
-            return 1
-        return min(target, max(1, int(np.sqrt(len(vals)))))
 
     for label, id_vals, noise_vals, xlabel, key in hist_configs:
         m = methods[label]
@@ -512,7 +367,7 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
 
     # Prediction distribution bar chart
     fig, ax = plt.subplots(figsize=(8, 5))
-    bar_colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    bar_colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
     bars = ax.bar(class_names, noise_class_pcts,
                   color=bar_colors[:len(class_names)], edgecolor="white")
     for bar, pct in zip(bars, noise_class_pcts):
@@ -530,7 +385,6 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     msp_aurocs_t, energy_aurocs_t = [], []
 
     for T in temperatures:
-        # MSP with temperature
         msp_t_id = np.max(np.exp(id_logits / T) /
                           np.sum(np.exp(id_logits / T), axis=1, keepdims=True), axis=1)
         msp_t_noise = np.max(np.exp(noise_logits / T) /
@@ -538,7 +392,6 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
         msp_t_scores = np.concatenate([msp_t_id, msp_t_noise])
         msp_aurocs_t.append(roc_auc_score(ood_labels, msp_t_scores))
 
-        # Energy with temperature: -T * logsumexp(logits / T)
         energy_t_id = -T * logsumexp(id_logits / T, axis=1)
         energy_t_noise = -T * logsumexp(noise_logits / T, axis=1)
         energy_t_scores = np.concatenate([-energy_t_id, -energy_t_noise])
@@ -592,7 +445,6 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
         print(f"  [noise_ood] {'Energy_tuned':12s} AUROC: {et['auroc']:.4f} | "
               f"FPR@95: {et['fpr95']:.4f} | AUPR: {et['aupr']:.4f}")
 
-        # W&B scalars
         run.summary["noise_ood/auroc_energy_tuned"] = et["auroc"]
         run.summary["noise_ood/fpr95_energy_tuned"] = et["fpr95"]
         run.summary["noise_ood/aupr_energy_tuned"] = et["aupr"]
@@ -636,7 +488,6 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     best_scores = methods[best_method]["scores"]
 
     fpr_curve, tpr_curve, thresholds = roc_curve(ood_labels, best_scores)
-    # Noise rejection rate = 1 - FPR (fraction of noise correctly rejected)
     noise_rejection = 1.0 - fpr_curve
 
     # Operating points table
@@ -687,7 +538,6 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     for c, cls in enumerate(class_names):
         mask = id_labels_raw == c
         class_msp = msp_id[mask]
-        # AUROC: this class alone vs all noise
         class_labels = np.concatenate([np.ones(mask.sum()), np.zeros(n_noise)])
         class_scores = np.concatenate([class_msp, msp_noise])
         if mask.sum() > 0:
@@ -736,109 +586,7 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
 
 
 # ──────────────────────────────────────────────
-# Phase 4 : Dimensionality reduction (PCA / t-SNE)
-# ──────────────────────────────────────────────
-def extract_features(model, loader, device):
-    """Extract fc1 features (256-dim) from the model for all samples."""
-    model.eval()
-    all_labels = []
-    activations = []
-
-    def hook_fn(m, inp, out):
-        activations.append(out.detach().cpu())
-
-    hook = model.fc1.register_forward_hook(hook_fn)
-
-    with torch.no_grad():
-        for signals, labels in loader:
-            signals = signals.to(device)
-            model(signals)
-            all_labels.extend(labels.numpy())
-
-    hook.remove()
-    features = torch.cat(activations, dim=0).numpy()
-    return features, np.array(all_labels)
-
-
-def extract_multilayer_features(model, loader, device):
-    """Extract features from pool1, pool2, pool3 (with GAP) and fc1.
-
-    Conv layer outputs are global-average-pooled along the temporal axis
-    to produce fixed-size vectors (64, 128, 256, 256 dims respectively).
-
-    Returns:
-        (layer_features_list, labels): list of 4 numpy arrays + label array.
-    """
-    model.eval()
-    all_labels = []
-    layer_names = ["pool1", "pool2", "pool3", "fc1"]
-    layer_activations = {name: [] for name in layer_names}
-
-    hooks = []
-
-    def make_hook(name):
-        def hook_fn(m, inp, out):
-            layer_activations[name].append(out.detach().cpu())
-        return hook_fn
-
-    hooks.append(model.pool1.register_forward_hook(make_hook("pool1")))
-    hooks.append(model.pool2.register_forward_hook(make_hook("pool2")))
-    hooks.append(model.pool3.register_forward_hook(make_hook("pool3")))
-    hooks.append(model.fc1.register_forward_hook(make_hook("fc1")))
-
-    with torch.no_grad():
-        for signals, labels in loader:
-            signals = signals.to(device)
-            model(signals)
-            all_labels.extend(labels.numpy())
-
-    for h in hooks:
-        h.remove()
-
-    labels_array = np.array(all_labels)
-    result = []
-    for name in layer_names:
-        feats = torch.cat(layer_activations[name], dim=0)
-        if feats.dim() == 3:  # Conv output: (N, C, L) -> GAP -> (N, C)
-            feats = feats.mean(dim=2)
-        result.append(feats.numpy())
-
-    return result, labels_array
-
-
-def plot_dimensionality_reduction(features, labels, class_names, prefix):
-    """Generate PCA and t-SNE scatter plots colored by class. Returns (pca_fig, tsne_fig)."""
-    # PCA
-    pca = PCA(n_components=2)
-    pca_result = pca.fit_transform(features)
-
-    pca_fig, ax = plt.subplots(figsize=(8, 6))
-    for i, cls in enumerate(class_names):
-        mask = labels == i
-        ax.scatter(pca_result[mask, 0], pca_result[mask, 1], label=cls, alpha=0.6, s=15)
-    ax.set_title(f"PCA - {prefix}")
-    ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%})")
-    ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%})")
-    ax.legend()
-
-    # t-SNE
-    tsne = TSNE(n_components=2, random_state=42, perplexity=30)
-    tsne_result = tsne.fit_transform(features)
-
-    tsne_fig, ax = plt.subplots(figsize=(8, 6))
-    for i, cls in enumerate(class_names):
-        mask = labels == i
-        ax.scatter(tsne_result[mask, 0], tsne_result[mask, 1], label=cls, alpha=0.6, s=15)
-    ax.set_title(f"t-SNE - {prefix}")
-    ax.set_xlabel("t-SNE 1")
-    ax.set_ylabel("t-SNE 2")
-    ax.legend()
-
-    return pca_fig, tsne_fig
-
-
-# ──────────────────────────────────────────────
-# Phase 6 : Cluster distances
+# Cluster distance evaluation
 # ──────────────────────────────────────────────
 def cosine_distance(a, b):
     """Cosine distance between two vectors: 1 - cos(theta) in [0, 2]."""
@@ -865,7 +613,7 @@ def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
                                     class_names, dataset_name):
     """Compute pairwise cosine distances between cluster centroids and log to W&B.
 
-    Uses pre-extracted fc1 features (256-dim) to compute centroids for each particle
+    Uses pre-extracted feature_layer features to compute centroids for each particle
     class plus noise, then logs a lower-triangular table, scalar summaries, and a heatmap.
     """
     cluster_names = class_names + ["Noise"]
@@ -900,7 +648,7 @@ def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
             row_str += f"{mat[i, j]:10.4f}"
         print(row_str)
 
-    # ── W&B Table (lower-triangular) ──
+    # W&B Table (lower-triangular)
     columns = ["cluster"] + cluster_names
     rows = []
     for i, row_name in enumerate(cluster_names):
@@ -920,13 +668,13 @@ def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
         )
     })
 
-    # ── Scalar summary entries for each pairwise distance ──
+    # Scalar summary entries for each pairwise distance
     for i in range(n):
         for j in range(i):
             key = f"cluster_distances/cosine_{cluster_names[i].lower()}_vs_{cluster_names[j].lower()}"
             run.summary[key] = round(float(mat[i, j]), 4)
 
-    # ── Heatmap ──
+    # Heatmap
     display = mat.copy()
     masked = np.ma.array(display, mask=np.isnan(display))
 
@@ -941,7 +689,7 @@ def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
     ax.set_yticks(range(n))
     ax.set_xticklabels(cluster_names, rotation=45, ha="right")
     ax.set_yticklabels(cluster_names)
-    ax.set_title(f"Cluster Cosine Distances — {dataset_name}")
+    ax.set_title(f"Cluster Cosine Distances \u2014 {dataset_name}")
 
     for i in range(n):
         for j in range(n):
@@ -958,37 +706,110 @@ def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
 
 
 # ──────────────────────────────────────────────
+# 3-class comparison evaluation
+# ──────────────────────────────────────────────
+def run_3class_evaluation(run, model, loader, criterion, device):
+    """Evaluate 4-class model on particle classes only (2um, 4um, 10um).
+
+    Filters the test set to exclude Noise samples, then computes confusion
+    matrix and F1 per class for direct comparison with a 3-class model.
+    """
+    prefix = "Charts_3class"
+    print(f"\n  [{prefix}] Evaluating on 3 particle classes only...")
+
+    _, _, y_pred, y_true, _ = evaluate(model, loader, criterion, device)
+
+    # Filter to particle classes only (0=2um, 1=4um, 2=10um)
+    mask = np.isin(y_true, [0, 1, 2])
+    y_true_3c = y_true[mask]
+    y_pred_3c = y_pred[mask]
+    n_as_noise = int(np.sum(y_pred_3c == 3))
+    acc_3c = float(np.mean(y_pred_3c == y_true_3c))
+
+    print(f"  [{prefix}] {len(y_true_3c)} particle samples, "
+          f"{n_as_noise} predicted as Noise")
+    print(f"  [{prefix}] Accuracy (particle classes): {acc_3c:.4f}")
+
+    run.summary[f"{prefix}/accuracy"] = acc_3c
+
+    # Confusion matrix (3x3, predictions of class Noise excluded from columns)
+    cm = confusion_matrix(y_true_3c, y_pred_3c, labels=[0, 1, 2])
+    fig_cm, ax_cm = plt.subplots(figsize=(7, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=PARTICLE_NAMES, yticklabels=PARTICLE_NAMES, ax=ax_cm)
+    ax_cm.set_xlabel("Predicted")
+    ax_cm.set_ylabel("True")
+    ax_cm.set_title(f"3-Class CM (4-class model, Acc: {acc_3c:.4f})")
+    plt.tight_layout()
+    run.log({f"{prefix}/confusion_matrix": wandb.Image(fig_cm)})
+    plt.close(fig_cm)
+
+    # Interactive confusion matrix (Charts tab)
+    run.log({f"{prefix}/confusion_matrix_chart": wandb.plot.confusion_matrix(
+        y_true=y_true_3c.tolist(), preds=y_pred_3c.tolist(),
+        class_names=PARTICLE_NAMES
+    )})
+
+    # Classification report — F1 properly penalizes Noise predictions in recall
+    report = classification_report(
+        y_true_3c, y_pred_3c, labels=[0, 1, 2],
+        target_names=PARTICLE_NAMES, output_dict=True,
+    )
+    print(classification_report(
+        y_true_3c, y_pred_3c, labels=[0, 1, 2],
+        target_names=PARTICLE_NAMES, digits=4,
+    ))
+
+    # F1 per class table
+    rows = []
+    for cls in PARTICLE_NAMES:
+        rows.append([
+            cls,
+            round(report[cls]["precision"], 4),
+            round(report[cls]["recall"], 4),
+            round(report[cls]["f1-score"], 4),
+            int(report[cls]["support"]),
+        ])
+    run.log({
+        f"{prefix}/f1_per_class": wandb.Table(
+            columns=["Class", "Precision", "Recall", "F1", "Support"],
+            data=rows,
+        )
+    })
+
+    # F1 bar chart
+    f1_data = [[cls, report[cls]["f1-score"]] for cls in PARTICLE_NAMES]
+    f1_table = wandb.Table(data=f1_data, columns=["class", "f1"])
+    run.log({
+        f"{prefix}/f1_bar_chart": wandb.plot.bar(
+            f1_table, "class", "f1", title="F1 per Class (3-class comparison)"
+        )
+    })
+
+    if n_as_noise > 0:
+        print(f"  [{prefix}] Note: {n_as_noise} particle samples predicted "
+              f"as Noise (excluded from CM columns)")
+
+    return acc_3c
+
+
+# ──────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────
 def main():
-    parser = argparse.ArgumentParser(description="Benchmark pipeline for particle classification")
-    parser.add_argument("--data-dir", type=str, default="dataset", help="Path to dataset root (train/test)")
-    parser.add_argument("--real-test-dir", type=str, default="dataset/test", help="Path to real test data directory")
-    parser.add_argument("--noise-dir", type=str, default="Noise",
-                        help="Path to noise samples directory for OOD visualization")
-    parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
-    parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
-    parser.add_argument("--lr", type=float, default=6e-4, help="Learning rate")
-    parser.add_argument("--decimate", type=int, default=4, help="Decimation factor")
-    parser.add_argument("--val-split", type=float, default=0.2, help="Validation split fraction")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--convergence-threshold", type=float, default=0.95,
-                        help="Val accuracy threshold to measure convergence time")
-    parser.add_argument("--dataset-name", type=str, default=None,
-                        help="Descriptive name for the dataset (default: auto from --data-dir)")
-    parser.add_argument("--run-id", type=str, default="run1", help="Run identifier for W&B naming")
-    parser.add_argument("--patience", type=int, default=0,
-                        help="Early stopping patience (0 = disabled)")
-    parser.add_argument("--wandb-offline", action="store_true", help="Run W&B in offline mode")
-    parser.add_argument("--scheduler", choices=["none", "cosine", "plateau"], default="cosine",
-                        help="LR scheduler: none, cosine (CosineAnnealingLR), plateau (ReduceLROnPlateau)")
+    parser = argparse.ArgumentParser(
+        description="Train 4-class classifier (2um, 4um, 10um, Noise)"
+    )
+    add_common_training_args(parser, data_dir_default="data/S1_white_4c")
+    parser.add_argument("--noise-dir", type=str, default=None,
+                        help="Path to noise samples for OOD evaluation (default: None)")
+    parser.add_argument("--real-test-dir", type=str, default=None,
+                        help="Path to real test set for generalization gap (default: None)")
     args = parser.parse_args()
 
     if args.dataset_name is None:
         args.dataset_name = Path(args.data_dir).name
-        if args.real_test_dir:
-            args.dataset_name += "-" + Path(args.real_test_dir).name
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
@@ -999,43 +820,72 @@ def main():
     if not data_dir.exists():
         raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    run_name = f"Conv1D-{args.dataset_name}-{args.run_id}"
+    run_name = f"{args.model}-{args.dataset_name}-{args.run_id}"
     output_dir = Path(args.output_dir) / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    class_names = ["2um", "4um", "10um"]
     input_length = RAW_SIGNAL_LENGTH // args.decimate
 
     # Transforms
     bandpass = BandpassFilter(low_cutoff_khz=5.0, high_cutoff_khz=100.0, sample_rate_mhz=2.0)
     decimate_transform = Decimate(decimate=args.decimate)
+    base_transforms = [bandpass, decimate_transform]
 
-    # Datasets
+    # Build augmentation transforms (training only)
+    aug_transforms = []
+    if args.augment:
+        aug_transforms = [
+            GaussianNoise(snr_db=args.aug_snr),
+            TimeShift(max_shift_frac=args.aug_shift),
+            AmplitudeScale(scale_min=args.aug_scale_min, scale_max=args.aug_scale_max),
+        ]
+        print(f"Augmentation enabled: GaussianNoise(snr={args.aug_snr}dB), "
+              f"TimeShift(max={args.aug_shift}), "
+              f"AmplitudeScale([{args.aug_scale_min}, {args.aug_scale_max}])")
+
+    # Datasets (4 classes)
+    # Val dataset uses base transforms only; train dataset adds augmentation if enabled
+    val_dataset = ParticleDataset(
+        data_dir / "train", CLASS_NAMES, transforms=base_transforms
+    )
     train_dataset = ParticleDataset(
-        data_dir / "train", class_names, transforms=[bandpass, decimate_transform]
+        data_dir / "train", CLASS_NAMES, transforms=base_transforms + aug_transforms
     )
     test_dataset = ParticleDataset(
-        data_dir / "test", class_names, transforms=[bandpass, decimate_transform]
+        data_dir / "test", CLASS_NAMES, transforms=base_transforms
     )
 
-    val_size = int(len(train_dataset) * args.val_split)
-    train_size = len(train_dataset) - val_size
-    train_subset, val_subset = torch.utils.data.random_split(
-        train_dataset, [train_size, val_size],
-        generator=torch.Generator().manual_seed(args.seed),
+    # Split indices once, then apply to both datasets
+    total_size = len(val_dataset)
+    val_size = int(total_size * args.val_split)
+    train_size = total_size - val_size
+    indices = torch.randperm(total_size, generator=torch.Generator().manual_seed(args.seed))
+    train_indices = indices[:train_size].tolist()
+    val_indices = indices[train_size:].tolist()
+
+    train_subset = Subset(train_dataset, train_indices)
+    val_subset = Subset(val_dataset, val_indices)
+
+    print(f"Dataset: {args.dataset_name} (4 classes)")
+    print(f"  Train: {train_size}, Val: {val_size}, Test: {len(test_dataset)}")
+
+    train_loader = DataLoader(
+        train_subset, batch_size=args.batch_size, shuffle=True, num_workers=4
+    )
+    val_loader = DataLoader(
+        val_subset, batch_size=args.batch_size, shuffle=False, num_workers=4
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4
     )
 
-    train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-
-    # Real test set (optional)
+    # Real test set (optional, for generalization gap)
     real_test_loader = None
     if args.real_test_dir is not None:
         real_test_dir = Path(args.real_test_dir)
         if real_test_dir.exists():
             real_test_dataset = ParticleDataset(
-                real_test_dir, class_names, transforms=[bandpass, decimate_transform]
+                real_test_dir, CLASS_NAMES, transforms=[bandpass, decimate_transform]
             )
             real_test_loader = DataLoader(
                 real_test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4
@@ -1044,7 +894,7 @@ def main():
         else:
             print(f"WARNING: real test dir not found: {real_test_dir}")
 
-    # Noise samples (optional, for OOD evaluation and latent space visualization)
+    # Noise samples (optional, for OOD evaluation and cluster distances)
     noise_loader = None
     if args.noise_dir is not None:
         noise_dir = Path(args.noise_dir)
@@ -1061,54 +911,49 @@ def main():
         else:
             print(f"WARNING: noise dir not found: {noise_dir}")
 
-    # Model
-    model = Conv1DClassifier(
-        input_length=input_length, num_classes=len(class_names)
+    # Model (4 classes)
+    model = create_model(
+        args.model, input_length=input_length, num_classes=len(CLASS_NAMES)
     ).to(device)
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    model_macs = compute_model_macs(model, (1, 1, input_length), device)
+    macs_str = f", {model_macs:,} MACs" if model_macs is not None else ""
+    print(f"Model: {args.model} ({num_params:,} params{macs_str}, {len(CLASS_NAMES)} classes)")
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.0001)
 
-    # LR scheduler
-    scheduler = None
-    if args.scheduler == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    elif args.scheduler == "plateau":
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.5, patience=10
-        )
+    optimizer = create_optimizer(model, args)
+    scheduler = create_scheduler(optimizer, args)
 
     # ── W&B Init ──
     wandb_mode = "offline" if args.wandb_offline else "online"
     config = {
-        "model_name": "Conv1DClassifier",
+        "model_name": args.model,
         "model_size_params": num_params,
         "dataset": args.dataset_name,
         "dataset_size": train_size,
         "epochs": args.epochs,
         "batch_size": args.batch_size,
         "learning_rate": args.lr,
-        "optimizer": "Adam",
-        "weight_decay": 0.0001,
+        "optimizer": args.optimizer,
+        "seed": args.seed,
+        "patience": args.patience,
+        "num_classes": len(CLASS_NAMES),
+        "scheduler": args.scheduler,
+        "weight_decay": args.weight_decay,
         "decimate": args.decimate,
         "input_length": input_length,
-        "num_classes": len(class_names),
-        "dropout_conv": model.drop1.p,
-        "dropout_fc": model.drop_fc.p,
+        "model_macs": model_macs,
         "val_split": args.val_split,
         "convergence_threshold": args.convergence_threshold,
-        "has_real_test": real_test_loader is not None,
-        "patience": args.patience,
-        "seed": args.seed,
-        "scheduler": args.scheduler,
+        "augment": args.augment,
     }
 
     run = wandb.init(
         project="particle-benchmark",
         config=config,
-        group="Conv1DClassifier",
-        tags=[args.dataset_name, "benchmark"],
+        group=args.model,
+        tags=[args.dataset_name, "4class"],
         name=run_name,
         job_type="training",
         mode=wandb_mode,
@@ -1121,34 +966,52 @@ def main():
         run.define_metric("val/accuracy", summary="max", goal="maximize")
         run.define_metric("val/loss", summary="min", goal="minimize")
 
-        # ── Phase 1 ──
-        log_pre_training(run, num_params, args, train_size, val_size, class_names)
+        run.summary["model_size_params"] = num_params
+        run.summary["dataset_size"] = train_size
+        if model_macs is not None:
+            run.summary["model_macs"] = model_macs
 
-        # ── Phase 2 ──
+        # ── Training ──
         best_val_acc, best_epoch, total_time, convergence_time = run_training_loop(
             run, model, train_loader, val_loader, criterion, optimizer, device, args,
             output_dir=output_dir, scheduler=scheduler,
         )
 
-        # ── Phase 3 ──
+        # ── Post-training testing (Charts) ──
         print("\n" + "=" * 60)
-        print("PHASE 3 : Post-training (best model)")
+        print("Post-training testing (best model, 4 classes)")
         print("=" * 60)
 
-        model.load_state_dict(torch.load(output_dir / "best_model.pth", weights_only=True))
-
-        # Test on synthetic data (same distribution as training)
-        synth_acc, synth_loss = run_post_evaluation(
-            run, model, test_loader, criterion, device, class_names,
-            prefix="test_synthetic",
+        model.load_state_dict(
+            torch.load(output_dir / "best_model.pth", weights_only=True)
         )
 
-        # Test on real data (generalization)
+        synth_acc, _ = run_post_testing(run, model, test_loader, criterion, device, CLASS_NAMES)
+
+        # ── 3-class comparison (particle classes only) ──
+        print("\n" + "=" * 60)
+        print("3-class comparison (particle classes only)")
+        print("=" * 60)
+        run_3class_evaluation(run, model, test_loader, criterion, device)
+
+        # ── Inference latency ──
+        latency_ms = measure_inference_latency(
+            model, (1, 1, input_length), device
+        )
+        run.summary["inference_latency_ms"] = latency_ms
+        print(f"  Inference latency: {latency_ms:.2f} ms/sample")
+
+        # Real test set evaluation (generalization gap)
         if real_test_loader is not None:
-            real_acc, real_loss = run_post_evaluation(
-                run, model, real_test_loader, criterion, device, class_names,
-                prefix="test_real",
+            print("\n" + "=" * 60)
+            print("Real test set evaluation")
+            print("=" * 60)
+            real_acc, real_loss = run_post_testing(
+                run, model, real_test_loader, criterion, device, CLASS_NAMES
             )
+            # Override prefix to test_real for W&B
+            run.summary["test_real/accuracy"] = real_acc
+            run.summary["test_real/loss"] = real_loss
             gap = synth_acc - real_acc
             run.summary["generalization_gap"] = gap
             print(f"\n  Generalization gap (synthetic - real): {gap:+.4f}")
@@ -1156,86 +1019,81 @@ def main():
         # Save model as W&B artifact
         run.log_model(
             path=str(output_dir / "best_model.pth"),
-            name=f"Conv1D-{args.dataset_name}",
+            name=f"{args.model}-{args.dataset_name}-4class",
         )
 
-        # ── Phase 4 : Dimensionality reduction ──
+        # ── Noise separation visualization (latent space) ──
         print("\n" + "=" * 60)
-        print("PHASE 4 : Dimensionality reduction (PCA / t-SNE)")
+        print("Latent space visualization (4 classes)")
         print("=" * 60)
 
-        features, feat_labels = extract_features(model, test_loader, device)
-        pca_fig, tsne_fig = plot_dimensionality_reduction(
-            features, feat_labels, class_names, "test_synthetic"
-        )
-        run.log({
-            "test_synthetic/pca": wandb.Image(pca_fig),
-            "test_synthetic/tsne": wandb.Image(tsne_fig),
-        })
-        plt.close(pca_fig)
-        plt.close(tsne_fig)
-        print("  [test_synthetic] PCA and t-SNE logged to W&B")
-
-        if real_test_loader is not None:
-            features, feat_labels = extract_features(model, real_test_loader, device)
-            pca_fig, tsne_fig = plot_dimensionality_reduction(
-                features, feat_labels, class_names, "test_real"
-            )
-            run.log({
-                "test_real/pca": wandb.Image(pca_fig),
-                "test_real/tsne": wandb.Image(tsne_fig),
-            })
-            plt.close(pca_fig)
-            plt.close(tsne_fig)
-            print("  [test_real] PCA and t-SNE logged to W&B")
-
-        # Noise separation visualization
         noise_test_feats = None
         noise_test_labels = None
         noise_feats = None
+
+        features, feat_labels = extract_features(model, test_loader, device)
+        pca_fig, tsne_fig = plot_dimensionality_reduction(
+            features, feat_labels, CLASS_NAMES, "noise_separation"
+        )
+        run.log({
+            "noise_separation/pca": wandb.Image(pca_fig),
+            "noise_separation/tsne": wandb.Image(tsne_fig),
+        })
+        plt.close(pca_fig)
+        plt.close(tsne_fig)
+        print("  [noise_separation] PCA and t-SNE logged to W&B")
+
+        # Extra visualization: test + noise in shared latent space
         if noise_loader is not None:
             print("\n  Noise OOD separation analysis...")
+            # Use 3-class test subset (exclude Noise class from test set)
+            id_class_names = [c for c in CLASS_NAMES if c != "Noise"]
             noise_test_feats, noise_test_labels = extract_features(model, test_loader, device)
             noise_feats, _ = extract_features(model, noise_loader, device)
 
             combined_features = np.concatenate([noise_test_feats, noise_feats])
-            noise_labels = np.full(len(noise_feats), len(class_names))
+            noise_labels = np.full(len(noise_feats), len(CLASS_NAMES))
             combined_labels = np.concatenate([noise_test_labels, noise_labels])
-            combined_names = class_names + ["Noise"]
+            combined_names = CLASS_NAMES + ["OOD_Noise"]
 
             pca_fig, tsne_fig = plot_dimensionality_reduction(
-                combined_features, combined_labels, combined_names, "noise_separation"
+                combined_features, combined_labels, combined_names, "ood_separation"
             )
             run.log({
-                "noise_separation/pca": wandb.Image(pca_fig),
-                "noise_separation/tsne": wandb.Image(tsne_fig),
+                "ood_separation/pca": wandb.Image(pca_fig),
+                "ood_separation/tsne": wandb.Image(tsne_fig),
             })
             plt.close(pca_fig)
             plt.close(tsne_fig)
-            print("  [noise_separation] PCA and t-SNE logged to W&B")
+            print("  [ood_separation] PCA and t-SNE logged to W&B")
 
-        # ── Phase 5 : OOD Noise Evaluation ──
+        # ── OOD Noise Evaluation ──
         if noise_loader is not None:
             print("\n" + "=" * 60)
-            print("PHASE 5 : OOD Noise Evaluation")
+            print("OOD Noise Evaluation")
             print("=" * 60)
             run_ood_evaluation(
-                run, model, test_loader, noise_loader, device, class_names,
+                run, model, test_loader, noise_loader, device, CLASS_NAMES,
                 train_loader=train_loader,
             )
 
-        # ── Phase 6 : Cluster Distances ──
+        # ── Cluster Distances ──
         if noise_loader is not None:
             print("\n" + "=" * 60)
-            print("PHASE 6 : Cluster Distances")
+            print("Cluster Distances")
             print("=" * 60)
+            if noise_test_feats is None:
+                noise_test_feats, noise_test_labels = extract_features(
+                    model, test_loader, device
+                )
+                noise_feats, _ = extract_features(model, noise_loader, device)
             run_cluster_distance_evaluation(
                 run, noise_test_feats, noise_test_labels, noise_feats,
-                class_names, dataset_name=args.dataset_name,
+                CLASS_NAMES, dataset_name=args.dataset_name,
             )
 
         print("\n" + "=" * 60)
-        print("Benchmark complete.")
+        print("4-class training complete.")
         print("=" * 60)
     finally:
         run.finish()

@@ -21,32 +21,41 @@ python train.py
 Check the training_plots.png figure
 Play with the different hyperparameters (batch_size, lr, decimation, epochs)
 
-# Benchmarking
-Run the benchmark pipeline which wraps training with structured W&B metric logging, convergence tracking, early stopping, and full post-training evaluation:
+# 4-Class Training with Model Zoo
+Train using any of the 8 model architectures on a 4-class dataset (2um, 4um, 10um, Noise) with optional OOD evaluation and cluster distance analysis:
 ```bash
-# Basic benchmark (synthetic test set only)
-python benchmark.py --data-dir dataset
+# Basic 4-class training (Conv1D, default)
+python train4classes.py --data-dir S1_white_4c --epochs 150 --wandb-offline
+
+# Use a different model from the zoo
+python train4classes.py --model ResNet1D --data-dir S1_white_4c --epochs 150
+python train4classes.py --model InceptionTime1D --data-dir S2_colored_4c --epochs 150
+
+# With OOD evaluation (MSP, Energy, ODIN, Mahalanobis, Energy_tuned)
+python train4classes.py --model Conv1D --data-dir S1_white_4c --noise-dir Noise
 
 # With real test set (measures generalization gap)
-python benchmark.py --data-dir dataset --real-test-dir dataset_real/test
+python train4classes.py --model ResNet1D --data-dir S1_white_4c --real-test-dir dataset_real/test
 
-# With noise samples for OOD evaluation
-python benchmark.py --data-dir dataset --noise-dir Noise
+# Full pipeline: model zoo + OOD + cluster distances + generalization gap
+python train4classes.py --model EfficientNet1D --data-dir S1_white_4c --noise-dir Noise --real-test-dir dataset_real/test
 
-# Full benchmark: synthetic + real test + OOD noise
-python benchmark.py --data-dir dataset --real-test-dir dataset_real/test --noise-dir Noise
+# Custom hyperparameters, early stopping, offline W&B
+python train4classes.py --model VGG1D --data-dir S1_white_4c --epochs 200 --lr 1e-3 --patience 20 --wandb-offline
 
-# Custom hyperparameters and early stopping
-python benchmark.py --data-dir dataset --epochs 200 --lr 1e-3 --patience 20
+# With data augmentation (training set only)
+python train4classes.py --data-dir S1_white_4c --augment
+python train4classes.py --data-dir S1_white_4c --augment --aug-snr 15 --aug-scale-min 0.7 --aug-scale-max 1.3
 
-# Disable LR scheduler (constant LR) or use plateau scheduler
-python benchmark.py --data-dir dataset --scheduler none
-python benchmark.py --data-dir dataset --scheduler plateau
-
-# Offline W&B mode (no internet required)
-python benchmark.py --data-dir dataset --wandb-offline
+# With different optimizers
+python train4classes.py --data-dir S1_white_4c --optimizer adamw --weight-decay 0.01
+python train4classes.py --data-dir S1_white_4c --optimizer sgd --lr 0.01 --momentum 0.9
 ```
-The benchmark runs in 5 phases: (1) pre-training config logging, (2) training loop with per-epoch metrics, (3) post-training evaluation (confusion matrix, F1 per class, PR/ROC curves), (4) dimensionality reduction (PCA / t-SNE latent space visualizations), and (5) OOD noise evaluation (MSP, Energy, ODIN, Mahalanobis — AUROC, FPR@95, score histograms, ROC comparison). Phases 4–5 require `--noise-dir`. All metrics are logged to the W&B project `particle-benchmark`. See `Benchmarking.md` for the full W&B reference guide.
+Available models: Conv1D, LeNet1D, VGG1D, ResNet1D, InceptionTime1D, MobileNet1D, EfficientNet1D, DenseNet1D (all ~5.3M params, see `architecture_et_entrainement.md` for details).
+
+When `--noise-dir` is provided, the pipeline runs OOD evaluation (5 methods with AUROC/FPR@95/AUPR, score histograms, ROC comparison, temperature sweep, per-class analysis, silhouette score) and cluster distance analysis (cosine distance heatmap between class centroids). All metrics are logged to the W&B project `particle-benchmark`.
+
+> **Note:** The legacy 3-class benchmark script (`benchmark.py`) and the standalone cluster distance script (`compute_cluster_distances.py`) have been moved to `archive/`. All their functionality is available in `train4classes.py`.
 
 # Dataset Generation Interface
 Launch the Streamlit UI to configure and generate OFI particle signal datasets:

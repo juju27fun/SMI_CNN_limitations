@@ -1,6 +1,83 @@
 # Model Architecture and Training Loop
 
-## 1. Conv1DClassifier Architecture
+## 1. Model Zoo Overview
+
+The project includes a **model zoo** of 8 architectures in `models/`, all adapted for 1D particle signal classification. Every model follows the same interface:
+
+```python
+from models import create_model, list_models
+
+model = create_model("ResNet1D", input_length=625, num_classes=4)
+output = model(x)  # x: (batch, 1, input_length) -> (batch, num_classes)
+```
+
+All models expose a `feature_layer` attribute (penultimate `nn.Linear`, always 256-dim output) for hook-based feature extraction used in OOD evaluation and cluster distance analysis.
+
+### Available Models
+
+| Model | Registry Key | File | Params (4-class, 625) | Architecture |
+|-------|-------------|------|----------------------:|--------------|
+| Conv1D | `Conv1D` | `models/conv1d.py` | 5,319,556 | 3 Conv+BN+Pool blocks, 2 FC layers |
+| LeNet-5 | `LeNet1D` | `models/lenet1d.py` | 5,255,364 | 2 Conv+BN+Pool layers, 3 FC layers |
+| VGG | `VGG1D` | `models/vgg1d.py` | 5,270,996 | 4 VGG blocks (stacked 3-kernel convs), 3 FC layers |
+| ResNet-18 | `ResNet1D` | `models/resnet1d.py` | 5,289,990 | Stem + 4 residual stages (BasicBlock), GAP, 2 FC layers |
+| InceptionTime | `InceptionTime1D` | `models/inception1d.py` | 5,289,832 | 6 Inception modules (multi-scale parallel convs), residual shortcuts every 3, GAP |
+| MobileNetV2 | `MobileNet1D` | `models/mobilenet1d.py` | 5,364,292 | Depthwise separable convs, inverted residual blocks, ReLU6, GAP |
+| EfficientNet-B0 | `EfficientNet1D` | `models/efficientnet1d.py` | 5,393,462 | MBConv blocks, squeeze-and-excitation, SiLU, stochastic depth, GAP |
+| DenseNet | `DenseNet1D` | `models/densenet1d.py` | 5,298,364 | 3 dense blocks (6/12/24 layers), transition layers, growth_rate=40, GAP |
+
+> All models are scaled to ~5.3M parameters for fair comparison. Feature layer output is always 256-dim.
+
+### Model-Specific Parameters
+
+Each model accepts `input_length`, `num_classes`, and `dropout` as standard arguments. Additional architecture-specific parameters:
+
+| Model | Extra Parameters |
+|-------|-----------------|
+| Conv1D | _(none)_ |
+| LeNet1D | _(none)_ |
+| VGG1D | _(none)_ |
+| ResNet1D | `base_width=74` |
+| InceptionTime1D | `num_filters=148`, `depth=6`, `bottleneck_size=64` |
+| MobileNet1D | `width_mult=1.5` |
+| EfficientNet1D | `width_mult=0.85` |
+| DenseNet1D | `growth_rate=40`, `block_config=(6,12,24)`, `init_channels=64`, `compression=0.5`, `bn_size=4` |
+
+### Code Organization
+
+```
+models/
+  __init__.py          # MODEL_REGISTRY + create_model() + list_models()
+  conv1d.py            # Conv1DClassifier
+  lenet1d.py           # LeNet1D
+  vgg1d.py             # VGG1D
+  resnet1d.py          # ResNet1D
+  inception1d.py       # InceptionTime1D
+  mobilenet1d.py       # MobileNet1D
+  efficientnet1d.py    # EfficientNet1D
+  densenet1d.py        # DenseNet1D
+```
+
+### Feature Extraction Interface
+
+All models expose `model.feature_layer` for hook-based feature extraction:
+
+```python
+activations = []
+def hook_fn(m, inp, out):
+    activations.append(out.detach().cpu())
+
+hook = model.feature_layer.register_forward_hook(hook_fn)
+model(x)
+hook.remove()
+features = torch.cat(activations, dim=0).numpy()  # shape: (N, 256)
+```
+
+This is used by `train4classes.py` for latent space visualization, OOD evaluation (Mahalanobis, silhouette score), and cluster distance analysis.
+
+---
+
+## 2. Conv1DClassifier Architecture (detailed)
 
 > Input: 1D particle signal (1 channel, 250 samples after 4x decimation)
 
@@ -71,7 +148,22 @@ graph TD
 
 ---
 
-## 2. Training Loop — One Iteration (One Batch)
+## 3. Training Pipelines
+
+The project has two training scripts:
+
+| Script | Classes | Models | OOD | Cluster Distances | W&B | Augmentation | Optimizer |
+|--------|---------|--------|-----|-------------------|-----|-------------|-----------|
+| `train.py` | 3 (2um, 4um, 10um) | Conv1D only | No | No | No | No | Adam |
+| `train4classes.py` | 4 (2um, 4um, 10um, Noise) | All 8 models | Yes (5 methods, via `--noise-dir`) | Yes (via `--noise-dir`) | Yes | Yes (`--augment`) | Adam/AdamW/SGD (`--optimizer`) |
+
+`train4classes.py` is the unified pipeline supporting the full model zoo with optional OOD evaluation, cluster distance analysis, data augmentation, and optimizer selection. See the README for usage examples.
+
+> Legacy scripts (`benchmark.py`, `compute_cluster_distances.py`) have been moved to `archive/`.
+
+---
+
+## 4. Training Loop — One Iteration (One Batch)
 
 ```mermaid
 graph TD
@@ -96,7 +188,7 @@ graph TD
     end
 
     subgraph UPDATE["Weight update"]
-        OPT["optimizer.step<br/>Adam: w = w - lr * m / sqrt v + eps<br/>with weight_decay=0.0001"]
+        OPT["optimizer.step<br/>Adam/AdamW/SGD<br/>with configurable weight_decay"]
     end
 
     ACCUM["Accumulate loss for reporting<br/>total_loss += loss.item * batch_size"]

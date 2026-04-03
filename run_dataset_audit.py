@@ -262,7 +262,7 @@ def main():
     args = parser.parse_args()
 
     # Discover datasets
-    discovered = discover_datasets(SCRIPT_DIR, args.datasets)
+    discovered = discover_datasets(SCRIPT_DIR / "data", args.datasets)
     split_datasets = discovered["split_datasets"]
     noise_folders = discovered["noise_folders"]
 

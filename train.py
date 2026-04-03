@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from torchsummary import summary
+from models import create_model
 
 RAW_SIGNAL_LENGTH = 2500
 
@@ -86,51 +87,50 @@ class Truncate:
         return signal[..., :self.length]
 
 
-class Conv1DClassifier(nn.Module):
-    """1D Convolutional classifier for particle signals."""
-    
-    def __init__(self, input_length: int = 250, num_classes: int = 3, dropout: float = 0.2):
-        super(Conv1DClassifier, self).__init__()
-        
-        # Conv1D layers with increasing channels and max pooling to reduce sequence length
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=64, kernel_size=5, padding=2)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.pool1 = nn.MaxPool1d(kernel_size=2)
-        self.drop1 = nn.Dropout(dropout)
-        
-        self.conv2 = nn.Conv1d(in_channels=64, out_channels=128, kernel_size=5, padding=2)
-        self.bn2 = nn.BatchNorm1d(128)
-        self.pool2 = nn.MaxPool1d(kernel_size=2)
-        self.drop2 = nn.Dropout(dropout)
-        
-        self.conv3 = nn.Conv1d(in_channels=128, out_channels=256, kernel_size=5, padding=2)
-        self.bn3 = nn.BatchNorm1d(256)
-        self.pool3 = nn.MaxPool1d(kernel_size=2)
-        self.drop3 = nn.Dropout(dropout)
-        
-        # Flatten size: 256 channels * (seq_len / 8) width
-        flatten_size = 256 * (input_length // 2 // 2 // 2)
-        self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(flatten_size, 256)
-        self.drop_fc = nn.Dropout(0.5)
-        self.fc2 = nn.Linear(256, num_classes)
-    
-    def forward(self, x):
-        # Input shape: (batch, seq_len) - 1D signal format
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = self.drop1(self.pool1(x))
-        
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = self.drop2(self.pool2(x))
-        
-        x = F.relu(self.bn3(self.conv3(x)))
-        x = self.drop3(self.pool3(x))
-        
-        x = self.flatten(x)
-        x = F.relu(self.fc1(x))
-        x = self.drop_fc(x)
-        x = self.fc2(x)
-        return x
+class GaussianNoise:
+    """Additive Gaussian noise with configurable SNR (dB). Applied with probability p."""
+    def __init__(self, snr_db: float = 20.0, p: float = 0.5):
+        self.snr_db = snr_db
+        self.p = p
+
+    def __call__(self, signal: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1).item() > self.p:
+            return signal
+        sig_power = signal.pow(2).mean()
+        noise_power = sig_power / (10 ** (self.snr_db / 10))
+        noise = torch.randn_like(signal) * noise_power.sqrt()
+        return signal + noise
+
+
+class TimeShift:
+    """Random circular shift along the time axis. Applied with probability p."""
+    def __init__(self, max_shift_frac: float = 0.1, p: float = 0.5):
+        self.max_shift_frac = max_shift_frac
+        self.p = p
+
+    def __call__(self, signal: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1).item() > self.p:
+            return signal
+        length = signal.size(-1)
+        max_shift = int(length * self.max_shift_frac)
+        if max_shift == 0:
+            return signal
+        shift = torch.randint(-max_shift, max_shift + 1, (1,)).item()
+        return torch.roll(signal, shifts=shift, dims=-1)
+
+
+class AmplitudeScale:
+    """Random amplitude scaling. Applied with probability p."""
+    def __init__(self, scale_min: float = 0.8, scale_max: float = 1.2, p: float = 0.5):
+        self.scale_min = scale_min
+        self.scale_max = scale_max
+        self.p = p
+
+    def __call__(self, signal: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1).item() > self.p:
+            return signal
+        scale = self.scale_min + torch.rand(1).item() * (self.scale_max - self.scale_min)
+        return signal * scale
 
 
 def train_one_epoch(model, loader, criterion, optimizer, device):
@@ -186,7 +186,7 @@ def run_training(args, device, class_names, train_loader, val_loader, test_loade
     """Execute full training pipeline with validation and testing."""
     input_length = RAW_SIGNAL_LENGTH // args.decimate
 
-    model = Conv1DClassifier(input_length=input_length, num_classes=len(class_names)).to(device)
+    model = create_model("Conv1D", input_length=input_length, num_classes=len(class_names)).to(device)
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model initialized with {num_params} trainable parameters.")
     summary(model, input_size=(1, input_length))
@@ -273,7 +273,7 @@ def run_training(args, device, class_names, train_loader, val_loader, test_loade
 # ----------------- Main function -----------------
 def main():
     parser = argparse.ArgumentParser(description="Train Conv1D classifier for particle classification")
-    parser.add_argument("--data-dir", type=str, default="dataset", help="Path to dataset root directory")
+    parser.add_argument("--data-dir", type=str, default="data/dataset", help="Path to dataset root directory")
     parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
     parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")

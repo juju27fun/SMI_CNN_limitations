@@ -1,277 +1,242 @@
 #!/usr/bin/env python3
-"""
-Fix dataset leaks:
-1. Remove leaked test files (source-level leaks + exact duplicates)
-2. Remove intra-split duplicates (one copy from each pair, respecting split)
-3. Replace removed files with fresh data from Downloads/<size>_DB
+"""Fix dataset leaks by source-level re-splitting.
+
+Instead of deleting leaked files (which shrinks the test set), this script
+reassigns files between train and test so that all crops from a given source
+recording stay in the same split. It also removes exact and intra-split
+duplicates.
+
+Steps:
+  1. Parse all filenames to extract source recording IDs
+  2. Assign each source to exactly one split (train or test), targeting ~80/20
+  3. Move files that are in the wrong split
+  4. Remove exact duplicates (intra-split, keeping one copy)
+  5. Verify final counts and zero source leaks
+
+No external replacement DB is needed — all existing files are preserved.
 """
 
 import argparse
 import hashlib
-import json
 import os
+import re
 import shutil
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
-CLASSES = ["10um", "2um", "4um"]
+CLASSES = ["2um", "4um", "10um"]
 SPLITS = ["train", "test"]
+TARGET_TEST_RATIO = 0.20
+
+SOURCE_RE = re.compile(r"^(.+?)(\d+)\.npy(\d+)\.npy$")
 
 
-# ---------- CLI ----------
-
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Fix dataset leaks: remove leaked files and replace from DB."
-    )
-    parser.add_argument("--dataset-root", type=Path,
-                        default=Path("dataset"),
-                        help="Path to the dataset root (default: dataset)")
-    parser.add_argument("--reports-dir", type=Path,
-                        default=Path("leak_reports"),
-                        help="Path to the leak reports directory (default: leak_reports)")
-    parser.add_argument("--db-root", type=Path,
-                        default=Path("replacement_db"),
-                        help="Path to the replacement DB root (default: replacement_db)")
-    return parser.parse_args()
+def parse_source(fname: str) -> str | None:
+    m = SOURCE_RE.match(fname)
+    if m:
+        return f"{m.group(1)}{m.group(2)}.npy"
+    return None
 
 
-# ---------- helpers ----------
-
-def load_report(reports_dir, name):
-    """Load a JSON leak report, returning [] if the file does not exist."""
-    path = reports_dir / f"{name}.json"
-    if not path.exists():
-        print(f"  (no {name}.json found – skipping)")
-        return []
-    with open(path) as f:
-        return json.load(f)
-
-
-def extract_class(filepath_str):
-    """Extract the class name from a report path (robust to ./ and absolute paths).
-
-    Works for paths like:
-        dataset/test/10um/file.npy
-        ./dataset/test/10um/file.npy
-        /home/.../dataset/test/10um/file.npy
-    """
-    return Path(filepath_str).parent.name
-
-
-def extract_split(filepath_str):
-    """Extract the split name (train/test) from a report path."""
-    return Path(filepath_str).parent.parent.name
-
-
-def extract_source(filename):
-    """Extract original source name from a dataset filename.
-
-    e.g. 'HFocusing_5_10_10um_0_1126.npy48.npy' -> 'HFocusing_5_10_10um_0_1126.npy'
-    """
-    idx = filename.find(".npy")
-    if idx >= 0:
-        return filename[:idx + 4]
-    return filename
-
-
-def resolve_path(dataset_root, relative_path):
-    """Resolve a report path to an absolute path on disk."""
-    return dataset_root.parent / relative_path
-
-
-def hash_npy(path):
-    """Compute MD5 of .npy file content."""
+def hash_npy(path: Path) -> str:
     return hashlib.md5(np.load(path).tobytes()).hexdigest()
 
 
-def find_replacements(cls, split, count_needed, class_to_db,
-                      remaining_sources, remaining_hashes,
-                      all_remaining_basenames, selected_replacement_hashes):
-    """Find replacement files from the DB that won't introduce new leaks."""
-    db_dir = class_to_db[cls]
-    available = sorted(os.listdir(db_dir))
-
-    # Sources to avoid: opposite split (would create cross-split leak)
-    opposite = "test" if split == "train" else "train"
-    forbidden_sources = remaining_sources[opposite].get(cls, set())
-
-    # Also avoid sources already in the same split (would create intra-split risk)
-    same_split_sources = remaining_sources[split].get(cls, set())
-
-    selected = []
-    for fname in available:
-        if len(selected) >= count_needed:
-            break
-        # Skip if filename already in dataset
-        if fname in all_remaining_basenames:
-            continue
-        # Skip if source overlaps with opposite split
-        src = extract_source(fname)
-        if src in forbidden_sources:
-            continue
-        # Skip if source overlaps with same split
-        if src in same_split_sources:
-            continue
-        # Skip if content is identical to any remaining dataset file or already-selected replacement
-        fpath = db_dir / fname
-        h = hash_npy(fpath)
-        if h in remaining_hashes or h in selected_replacement_hashes:
-            continue
-        selected.append(fname)
-        selected_replacement_hashes.add(h)
-
-    if len(selected) < count_needed:
-        print(f"  WARNING: Only found {len(selected)}/{count_needed} replacements for {split}/{cls}")
-
-    return selected
-
-
 def main():
-    args = parse_args()
-    dataset_root = args.dataset_root
-    reports_dir = args.reports_dir
-    db_root = args.db_root
+    parser = argparse.ArgumentParser(
+        description="Fix dataset leaks by source-level re-splitting."
+    )
+    parser.add_argument("--dataset-root", type=Path, default=Path("data/dataset"),
+                        help="Path to the dataset root (default: data/dataset)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what would be done without modifying files")
+    args = parser.parse_args()
 
-    # ---------- 1. Load leak reports ----------
-    print("=== Loading reports ===")
-    source_leaks = load_report(reports_dir, "source_leaks")
-    exact_duplicates = load_report(reports_dir, "exact_duplicates")
-    intra_duplicates = load_report(reports_dir, "intra_duplicates")
+    root = args.dataset_root
+    dry_run = args.dry_run
 
-    # ---------- 2. Collect files to remove ----------
-    files_to_remove = {"train": set(), "test": set()}
+    if dry_run:
+        print("*** DRY RUN — no files will be modified ***\n")
 
-    for entry in source_leaks:
-        for tf in entry["test_files"]:
-            files_to_remove["test"].add(tf)
-
-    for entry in exact_duplicates:
-        files_to_remove["test"].add(entry["test_file"])
-
-    for entry in intra_duplicates:
-        split = entry["split"]
-        files_to_remove[split].add(entry["file_b"])
-
-    # ---------- 3. Count removals per class per split ----------
-    removal_counts = {s: {} for s in SPLITS}
-
-    for split in SPLITS:
-        for f in files_to_remove[split]:
-            cls = extract_class(f)
-            removal_counts[split][cls] = removal_counts[split].get(cls, 0) + 1
-
-    print("\n=== Files to remove ===")
-    for split in SPLITS:
-        total = len(files_to_remove[split])
-        print(f"{split}: {total} file(s)")
-        for cls, count in sorted(removal_counts[split].items()):
-            print(f"  {split}/{cls}: {count}")
-
-    # ---------- 4. Build content-hash set of files that will remain ----------
-    print("\n=== Building content-hash index of remaining dataset ===")
-
-    basenames_to_remove = set()
-    for split in SPLITS:
-        for f in files_to_remove[split]:
-            basenames_to_remove.add((split, extract_class(f), Path(f).name))
-
-    remaining_hashes = set()
-    for split in SPLITS:
-        for cls in CLASSES:
-            cls_dir = dataset_root / split / cls
-            if not cls_dir.exists():
+    # ── 1. Inventory: map source -> split -> [files] per class ────────────
+    print("=== Step 1: Inventory ===")
+    # class -> source -> split -> [filename]
+    inventory = {}
+    for cls in CLASSES:
+        sources = defaultdict(lambda: defaultdict(list))
+        for split in SPLITS:
+            cls_dir = root / split / cls
+            if not cls_dir.is_dir():
                 continue
-            for fname in os.listdir(cls_dir):
-                if (split, cls, fname) in basenames_to_remove:
+            for f in sorted(os.listdir(cls_dir)):
+                if not f.endswith(".npy"):
                     continue
-                remaining_hashes.add(hash_npy(cls_dir / fname))
+                src = parse_source(f)
+                if src:
+                    sources[src][split].append(f)
+        inventory[cls] = dict(sources)
 
-    print(f"  {len(remaining_hashes)} unique content hashes in remaining dataset")
+    for cls in CLASSES:
+        sources = inventory[cls]
+        shared = sum(1 for s in sources.values()
+                     if "train" in s and "test" in s)
+        total = sum(len(sp.get("train", [])) + len(sp.get("test", []))
+                    for sp in sources.values())
+        print(f"  {cls}: {len(sources)} sources, {total} files, "
+              f"{shared} shared (leaked)")
 
-    # ---------- 5. Compute remaining sources per split/class ----------
-    remaining_sources = {s: {} for s in SPLITS}
-    for split in SPLITS:
-        for cls in CLASSES:
-            cls_dir = dataset_root / split / cls
-            if not cls_dir.exists():
-                continue
-            all_files = set(os.listdir(cls_dir))
-            removed = {Path(f).name for f in files_to_remove[split] if extract_class(f) == cls}
-            remaining = all_files - removed
-            remaining_sources[split][cls] = {extract_source(f) for f in remaining}
+    # ── 2. Source-level split assignment ───────────────────────────────────
+    print("\n=== Step 2: Source-level split assignment ===")
+    # For each class, assign each source to train or test.
+    # Strategy: keep non-shared sources where they are, then distribute
+    # shared sources to reach the target test ratio.
+    moves = defaultdict(list)  # (src_split, dst_split, cls) -> [filename]
 
-    all_remaining_basenames = set()
-    for split in SPLITS:
-        for cls in CLASSES:
-            cls_dir = dataset_root / split / cls
-            if not cls_dir.exists():
-                continue
-            all_files = set(os.listdir(cls_dir))
-            removed = {Path(f).name for f in files_to_remove[split] if extract_class(f) == cls}
-            all_remaining_basenames.update(all_files - removed)
+    for cls in CLASSES:
+        sources = inventory[cls]
+        total_files = sum(len(sp.get("train", [])) + len(sp.get("test", []))
+                         for sp in sources.values())
+        target_test = round(total_files * TARGET_TEST_RATIO)
 
-    # ---------- 6. Find replacement files from DB ----------
-    class_to_db = {
-        "10um": db_root / "10um_DB",
-        "2um": db_root / "2um_DB",
-        "4um": db_root / "4um_DB",
-    }
-    selected_replacement_hashes = set()
+        # Categorize sources
+        test_only = {s: sp for s, sp in sources.items()
+                     if "test" in sp and "train" not in sp}
+        train_only = {s: sp for s, sp in sources.items()
+                      if "train" in sp and "test" not in sp}
+        shared = {s: sp for s, sp in sources.items()
+                  if "train" in sp and "test" in sp}
 
-    print("\n=== Finding replacements ===")
-    replacements = {s: {} for s in SPLITS}
-    for split in SPLITS:
-        for cls in sorted(removal_counts[split].keys()):
-            count = removal_counts[split][cls]
-            repl = find_replacements(
-                cls, split, count, class_to_db,
-                remaining_sources, remaining_hashes,
-                all_remaining_basenames, selected_replacement_hashes,
-            )
-            replacements[split][cls] = repl
-            print(f"  {split}/{cls}: need {count}, found {len(repl)}")
+        # Start with non-shared counts
+        test_count = sum(len(sp["test"]) for sp in test_only.values())
+        train_count = sum(len(sp["train"]) for sp in train_only.values())
 
-    # ---------- 7. Execute: remove files and copy replacements ----------
-    print("\n=== Executing removals ===")
-    actual_removals = {s: {} for s in SPLITS}
+        # Assign shared sources
+        assigned_test = set()
+        assigned_train = set()
 
-    for split in SPLITS:
-        removed = 0
-        for f in sorted(files_to_remove[split]):
-            full_path = resolve_path(dataset_root, f)
-            if full_path.exists():
-                os.remove(full_path)
-                removed += 1
-                cls = extract_class(f)
-                actual_removals[split][cls] = actual_removals[split].get(cls, 0) + 1
+        # Sort shared sources by total crop count (smallest first for
+        # fine-grained filling of test quota)
+        shared_sorted = sorted(
+            shared.items(),
+            key=lambda x: len(x[1].get("train", [])) + len(x[1].get("test", []))
+        )
+
+        test_deficit = target_test - test_count
+        for src, sp in shared_sorted:
+            n = len(sp.get("train", [])) + len(sp.get("test", []))
+            if test_deficit > 0 and n <= test_deficit + 2:
+                assigned_test.add(src)
+                test_count += n
+                test_deficit -= n
             else:
-                print(f"  WARNING: {f} not found (already removed?)")
-        print(f"Removed {removed} {split} files")
+                assigned_train.add(src)
+                train_count += n
 
-    print("\n=== Copying replacements ===")
+        # Compute file moves
+        cls_moves_to_train = []
+        cls_moves_to_test = []
+
+        for src in assigned_train:
+            # Move test files of this source to train
+            for f in shared[src].get("test", []):
+                cls_moves_to_train.append(f)
+
+        for src in assigned_test:
+            # Move train files of this source to test
+            for f in shared[src].get("train", []):
+                cls_moves_to_test.append(f)
+
+        print(f"  {cls}: final train={train_count}, test={test_count} "
+              f"(moves: {len(cls_moves_to_train)} test->train, "
+              f"{len(cls_moves_to_test)} train->test)")
+
+        for f in cls_moves_to_train:
+            moves[("test", "train", cls)].append(f)
+        for f in cls_moves_to_test:
+            moves[("train", "test", cls)].append(f)
+
+    # ── 3. Execute moves ──────────────────────────────────────────────────
+    print("\n=== Step 3: Moving files ===")
+    total_moved = 0
+    for (src_split, dst_split, cls), files in sorted(moves.items()):
+        if not files:
+            continue
+        src_dir = root / src_split / cls
+        dst_dir = root / dst_split / cls
+        print(f"  {src_split}/{cls} -> {dst_split}/{cls}: {len(files)} file(s)")
+        for f in files:
+            src_path = src_dir / f
+            dst_path = dst_dir / f
+            if not dry_run:
+                shutil.move(str(src_path), str(dst_path))
+            total_moved += 1
+    print(f"  Total moved: {total_moved}")
+
+    # ── 4. Remove exact intra-split duplicates ────────────────────────────
+    print("\n=== Step 4: Removing intra-split duplicates ===")
+    total_removed = 0
     for split in SPLITS:
-        for cls, files in replacements[split].items():
-            n_needed = actual_removals[split].get(cls, 0)
-            to_copy = files[:n_needed]
-            if not to_copy:
-                print(f"  {split}/{cls}: 0 to copy (files were already removed)")
+        for cls in CLASSES:
+            cls_dir = root / split / cls
+            if not cls_dir.is_dir():
                 continue
-            dest_dir = dataset_root / split / cls
-            db_dir = class_to_db[cls]
-            for fname in to_copy:
-                shutil.copy2(db_dir / fname, dest_dir / fname)
-            print(f"  Copied {len(to_copy)} files to {split}/{cls}")
+            seen = {}
+            dupes = []
+            for f in sorted(os.listdir(cls_dir)):
+                if not f.endswith(".npy"):
+                    continue
+                h = hash_npy(cls_dir / f)
+                if h in seen:
+                    dupes.append(f)
+                else:
+                    seen[h] = f
+            if dupes:
+                print(f"  {split}/{cls}: removing {len(dupes)} duplicate(s)")
+                for f in dupes:
+                    if not dry_run:
+                        os.remove(cls_dir / f)
+                    total_removed += 1
+    print(f"  Total removed: {total_removed}")
 
-    # ---------- 8. Verify final counts ----------
+    # ── 5. Verify ─────────────────────────────────────────────────────────
     print("\n=== Final dataset counts ===")
     for split in SPLITS:
         for cls in CLASSES:
-            cls_dir = dataset_root / split / cls
-            count = len(os.listdir(cls_dir)) if cls_dir.exists() else 0
+            cls_dir = root / split / cls
+            count = len([f for f in os.listdir(cls_dir) if f.endswith(".npy")]) \
+                if cls_dir.is_dir() else 0
             print(f"  {split}/{cls}: {count}")
+
+    # Verify no source leaks remain
+    print("\n=== Verification: source leaks ===")
+    any_leak = False
+    for cls in CLASSES:
+        train_sources = set()
+        test_sources = set()
+        for f in os.listdir(root / "train" / cls):
+            src = parse_source(f)
+            if src:
+                train_sources.add(src)
+        for f in os.listdir(root / "test" / cls):
+            src = parse_source(f)
+            if src:
+                test_sources.add(src)
+        shared = train_sources & test_sources
+        if shared:
+            print(f"  FAIL {cls}: {len(shared)} shared source(s) remain!")
+            any_leak = True
+        else:
+            print(f"  OK {cls}: 0 shared sources")
+
+    if any_leak:
+        print("\nERROR: Source leaks still present!")
+        return 1
+    else:
+        print("\nAll source leaks resolved.")
+        return 0
 
 
 if __name__ == "__main__":
-    main()
+    exit(main())

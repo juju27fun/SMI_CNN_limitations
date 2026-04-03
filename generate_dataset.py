@@ -591,7 +591,7 @@ def main():
     subparsers = parser.add_subparsers(dest="mode", required=True)
 
     def add_common_args(sub):
-        sub.add_argument("--output", default="./dataset", help="Output directory")
+        sub.add_argument("--output", default="./data/dataset", help="Output directory")
         sub.add_argument("--force", action="store_true",
                          help="Overwrite output directory if it already exists")
         sub.add_argument("--signal", choices=["pure", "realistic"], default="realistic",
@@ -599,7 +599,7 @@ def main():
         sub.add_argument("--noise", choices=["none", "white", "colored", "realistic", "real"],
                          default="none",
                          help="Noise preset: none (default), white, colored, realistic, real")
-        sub.add_argument("--noise-dir", default="./Noise", metavar="DIR",
+        sub.add_argument("--noise-dir", default="./data/Noise", metavar="DIR",
                          help="Directory containing real noise files (for --noise real)")
         sub.add_argument("--with-filter", action="store_true",
                          help="Apply the generation bandpass filter during data generation")

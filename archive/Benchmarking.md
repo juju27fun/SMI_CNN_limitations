@@ -1,56 +1,83 @@
 # Particle Benchmark — Implementation & W&B Reference
 
-> The benchmark pipeline is **implemented** in `benchmark.py`. It wraps the training loop from `train.py` with structured W&B metric logging, convergence tracking, early stopping, and full post-training evaluation on both synthetic and (optionally) real test sets.
+> **`train4classes.py`** is the unified 4-class pipeline supporting **all 8 model architectures** from the model zoo, with optional OOD evaluation, cluster distances, real test set generalization gap, data augmentation, and optimizer selection.
+>
+> Legacy scripts (`benchmark.py`, `compute_cluster_distances.py`, `recolor_ood_plots.py`) have been moved to `archive/`.
 
-## Implemented Pipeline
+## Model Zoo
 
-The benchmark runs in **5 phases**:
+All 8 models are defined in `models/` and registered in `models/__init__.py`. They share a unified interface:
 
-| Phase | Function | What it does |
-|-------|----------|--------------|
-| Phase 1 | `log_pre_training()` | Logs config, model size, dataset size to W&B and stdout |
-| Phase 2 | `run_training_loop()` | Full training with per-epoch metrics, best-model tracking, convergence timing, early stopping |
-| Phase 3 | `run_post_evaluation()` | Evaluates best model on synthetic test set (and optionally real test set), logs confusion matrix, F1 table, bar charts, PR/ROC curves |
-| Phase 4 | `extract_features()` + `plot_dimensionality_reduction()` | PCA and t-SNE visualizations of the latent space (fc1 features) for test sets and noise separation |
-| Phase 5 | `run_ood_evaluation()` | OOD noise evaluation with 5 methods (MSP, Energy, ODIN, Mahalanobis, Energy_tuned). Logs AUROC, FPR@95, AUPR, score histograms, ROC comparison, temperature sweep, per-class analysis, and silhouette score |
-
-### Quick start
-
-```bash
-# Synthetic test set only
-python benchmark.py --data-dir dataset
-
-# With real test set (measures generalization gap)
-python benchmark.py --data-dir dataset --real-test-dir dataset_real/test
-
-# With noise samples for OOD evaluation (Phase 5)
-python benchmark.py --data-dir dataset --noise-dir Noise
-
-# Full benchmark: synthetic + real test + OOD noise
-python benchmark.py --data-dir dataset --real-test-dir dataset_real/test --noise-dir Noise
-
-# Offline W&B mode
-python benchmark.py --data-dir dataset --wandb-offline
-
-# Custom hyperparameters
-python benchmark.py --data-dir dataset --epochs 200 --lr 1e-3 --batch-size 64 --patience 20
-
-# Disable LR scheduler (constant LR)
-python benchmark.py --data-dir dataset --scheduler none
+```python
+from models import create_model, list_models
+model = create_model("ResNet1D", input_length=625, num_classes=4)
 ```
 
+| Model | Key | Params | Architecture |
+|-------|-----|-------:|--------------|
+| Conv1D | `Conv1D` | 5,319,556 | 3 Conv+BN+Pool blocks, 2 FC layers |
+| LeNet-5 | `LeNet1D` | 5,255,364 | 2 Conv+BN+Pool, 3 FC layers |
+| VGG | `VGG1D` | 5,270,996 | 4 VGG blocks (stacked 3-kernel convs), 3 FC |
+| ResNet-18 | `ResNet1D` | 5,289,990 | Stem + 4 residual stages, GAP, 2 FC |
+| InceptionTime | `InceptionTime1D` | 5,289,832 | 6 Inception modules, residual shortcuts, GAP |
+| MobileNetV2 | `MobileNet1D` | 5,364,292 | Depthwise separable convs, inverted residuals, GAP |
+| EfficientNet-B0 | `EfficientNet1D` | 5,393,462 | MBConv + SE + SiLU + stochastic depth, GAP |
+| DenseNet | `DenseNet1D` | 5,298,364 | 3 dense blocks, transition layers, GAP |
+
+All models output a 256-dim `feature_layer` for hook-based feature extraction (OOD, cluster distances, latent space viz).
+
+## Implemented Pipelines
+
+### `benchmark.py` — 3-class benchmark (archived)
+
+> **Archived.** Moved to `archive/benchmark.py`. All functionality is available in `train4classes.py`.
+
+### `train4classes.py` — 4-class multi-model pipeline
+
+Supports all 8 models from the zoo. Runs training + evaluation, with optional OOD and cluster distance phases (enabled via `--noise-dir`).
+
+```bash
+# Basic 4-class training (Conv1D default)
+python train4classes.py --data-dir S1_white_4c --epochs 150 --wandb-offline
+
+# Use a different model
+python train4classes.py --model ResNet1D --data-dir S1_white_4c --epochs 150
+
+# With OOD evaluation + cluster distances
+python train4classes.py --model InceptionTime1D --data-dir S1_white_4c --noise-dir Noise
+
+# With real test set (generalization gap)
+python train4classes.py --model EfficientNet1D --data-dir S1_white_4c --real-test-dir dataset_real/test
+
+# Full pipeline
+python train4classes.py --model DenseNet1D --data-dir S1_white_4c --noise-dir Noise --real-test-dir dataset_real/test --epochs 200 --patience 20
+```
+
+**Pipeline phases:**
+1. Training loop with per-epoch W&B metrics
+2. Post-training testing (confusion matrix, F1, PR/ROC curves)
+3. Real test set evaluation + generalization gap (if `--real-test-dir`)
+4. Latent space visualization (PCA + t-SNE, including noise separation if `--noise-dir`)
+5. OOD evaluation — 5 methods: MSP, Energy, ODIN, Mahalanobis (single-layer via `feature_layer`), Energy_tuned (if `--noise-dir`)
+6. Cluster distance analysis — cosine distance heatmap (if `--noise-dir`)
+
+> **Note:** Mahalanobis scoring uses single-layer feature extraction via `model.feature_layer` (works with all zoo models).
+
 ### Logged metrics summary
+
+These metrics are logged by `train4classes.py`:
 
 | Category | Metrics |
 |----------|---------|
 | Per-epoch | `epoch`, `train/loss`, `train/accuracy`, `val/loss`, `val/accuracy`, `epoch_time_sec`, `learning_rate` |
 | Summary | `best_val_accuracy`, `best_epoch`, `total_training_time_sec`, `convergence_time_sec`, `final_val_accuracy`, `final_val_loss`, `model_size_params`, `dataset_size` |
 | Evaluation | `{prefix}/accuracy`, `{prefix}/loss`, `{prefix}/confusion_matrix`, `{prefix}/f1_per_class`, `{prefix}/f1_bar_chart`, `{prefix}/pr_curve`, `{prefix}/roc_curve` |
-| Dim. reduction | `test_synthetic/pca`, `test_synthetic/tsne`, `test_real/pca`, `test_real/tsne`, `noise_separation/pca`, `noise_separation/tsne` |
+| Dim. reduction | `noise_separation/pca`, `noise_separation/tsne`, `ood_separation/pca`, `ood_separation/tsne` |
 | OOD (summary) | `noise_ood/auroc_{method}`, `noise_ood/fpr95_{method}`, `noise_ood/aupr_{method}` (for msp, energy, odin, mahalanobis, energy_tuned), `noise_ood/avg_max_softmax_id`, `noise_ood/avg_max_softmax_noise`, `noise_ood/avg_entropy_id`, `noise_ood/avg_entropy_noise`, `noise_ood/silhouette_score`, `noise_ood/num_noise_samples` |
 | OOD (plots) | `noise_ood/msp_histogram`, `noise_ood/energy_histogram`, `noise_ood/odin_histogram`, `noise_ood/mahalanobis_histogram`, `noise_ood/prediction_distribution`, `noise_ood/roc_comparison`, `noise_ood/temperature_sweep`, `noise_ood/threshold_analysis` |
 | OOD (tables) | `noise_ood/summary_table`, `noise_ood/operating_points`, `noise_ood/per_class_analysis` |
-| Conditional | `early_stopped_epoch` (if triggered), `generalization_gap` (if real test set provided) |
+| Cluster dist. | `cluster_distances/cosine_distance_table`, `cluster_distances/cosine_distance_heatmap`, `cluster_distances/cosine_{a}_vs_{b}` (pairwise scalars) |
+| Conditional | `early_stopped_epoch` (if triggered), `generalization_gap` (if real test set provided), `test_real/accuracy`, `test_real/loss` |
 
 All runs are logged to the W&B project **`particle-benchmark`** (see `.claude/rules/metrics-conventions.md` for the full specification).
 
@@ -85,23 +112,21 @@ A **Run** is the atomic unit of computation in W&B. Each training or evaluation 
 import wandb
 
 config = {
-    "model_name": "Conv1DClassifier",
+    "model_name": args.model,            # e.g. "ResNet1D", "DenseNet1D"
     "model_size_params": num_params,
-    "dataset": "synthetic_v1",
+    "dataset": args.dataset_name,
     "dataset_size": train_size,
     "epochs": 150,
     "batch_size": 32,
     "learning_rate": 6e-4,
-    "optimizer": "Adam",
-    "weight_decay": 0.0001,
+    "optimizer": args.optimizer,         # "adam", "adamw", or "sgd"
+    "weight_decay": args.weight_decay,
+    "augment": args.augment,
     "decimate": 4,
     "input_length": 625,
-    "num_classes": 3,
-    "dropout_conv": 0.2,
-    "dropout_fc": 0.5,
+    "num_classes": 4,
     "val_split": 0.2,
     "convergence_threshold": 0.95,
-    "has_real_test": False,
     "patience": 0,
     "seed": 42,
     "scheduler": "cosine",
@@ -110,9 +135,9 @@ config = {
 run = wandb.init(
     project="particle-benchmark",
     config=config,
-    group="Conv1DClassifier",                     # group runs by model
-    tags=["synthetic_v1", "benchmark"],            # filterable tags
-    name="Conv1D-synthetic_v1-run1",               # {model}-{dataset}-{run_id}
+    group=args.model,                             # group runs by model
+    tags=[args.dataset_name, "4class"],           # filterable tags
+    name=f"{args.model}-{args.dataset_name}-run1",  # {model}-{dataset}-{run_id}
     job_type="training",
 )
 ```
@@ -122,15 +147,15 @@ run = wandb.init(
 Stores all **independent variables** of the experiment. This is what appears in the config columns of the Runs Table and can be used to **group, filter and compare** runs.
 
 ```python
-# Set at init (benchmark.py passes the full config dict)
+# Set at init (train4classes.py passes the full config dict)
 wandb.init(config=config)
 
 # Or update later
-run.config["optimizer"] = "AdamW"
-run.config.update({"scheduler": "cosine", "weight_decay": 1e-4})
+run.config["optimizer"] = "adamw"
+run.config.update({"scheduler": "cosine", "weight_decay": 1e-4, "augment": True})
 ```
 
-**Current benchmark config includes:** `model_name`, `model_size_params`, `dataset`, `dataset_size`, `epochs`, `batch_size`, `learning_rate`, `optimizer`, `seed`, `patience`, `scheduler`, plus architecture-specific params (`decimate`, `input_length`, `num_classes`, `dropout_conv`, `dropout_fc`, `val_split`, `convergence_threshold`, `has_real_test`, `weight_decay`).
+**Current benchmark config includes:** `model_name`, `model_size_params`, `dataset`, `dataset_size`, `epochs`, `batch_size`, `learning_rate`, `optimizer`, `seed`, `patience`, `scheduler`, `weight_decay`, `augment`, plus architecture-specific params (`decimate`, `input_length`, `num_classes`, `val_split`, `convergence_threshold`).
 
 ---
 
@@ -190,7 +215,7 @@ run.define_metric("val/loss", summary="min", goal="minimize")
 
 Summary values appear in the **Runs Table** and can be used for sorting, filtering and bar charts.
 
-### 2.3 All Metrics Logged by `benchmark.py`
+### 2.3 All Metrics Logged by `train4classes.py`
 
 ```python
 # ---- Per-epoch metrics (in run_training_loop) ----
@@ -201,10 +226,10 @@ run.log({
     "val/loss": val_loss,
     "val/accuracy": val_acc,
     "epoch_time_sec": epoch_time,
-    "learning_rate": args.lr,
+    "learning_rate": current_lr,
 })
 
-# ---- Pre-training summary (in log_pre_training) ----
+# ---- Pre-training summary ----
 run.summary["model_size_params"] = num_params
 run.summary["dataset_size"] = train_size
 
@@ -256,7 +281,7 @@ run.log({"per_class_metrics_df": table})
 ### 3.3 Table for F1 Scores per Class (Benchmark Use Case)
 
 ```python
-# From run_post_evaluation() in benchmark.py
+# From run_post_testing() in train4classes.py
 from sklearn.metrics import classification_report
 
 report = classification_report(y_true, y_pred, target_names=class_names, output_dict=True)
@@ -307,7 +332,7 @@ W&B provides **one-line** chart creation methods. These are logged like any othe
 ### 4.1 Confusion Matrix
 
 ```python
-# From run_post_evaluation() in benchmark.py
+# From run_post_testing() in train4classes.py
 cm = wandb.plot.confusion_matrix(
     y_true=y_true.tolist(),
     preds=y_pred.tolist(),
@@ -325,7 +350,7 @@ run.log({f"{prefix}/confusion_matrix": cm})
 ### 4.2 Precision-Recall Curve
 
 ```python
-# From run_post_evaluation() in benchmark.py
+# From run_post_testing() in train4classes.py
 run.log({
     f"{prefix}/pr_curve": wandb.plot.pr_curve(
         y_true.tolist(), y_proba.tolist(), labels=class_names
@@ -336,7 +361,7 @@ run.log({
 ### 4.3 ROC Curve
 
 ```python
-# From run_post_evaluation() in benchmark.py
+# From run_post_testing() in train4classes.py
 run.log({
     f"{prefix}/roc_curve": wandb.plot.roc_curve(
         y_true.tolist(), y_proba.tolist(), labels=class_names
@@ -367,7 +392,7 @@ run.log({"multi_line": wandb.plot.line_series(
 ### 4.6 Bar Chart
 
 ```python
-# From run_post_evaluation() in benchmark.py
+# From run_post_testing() in train4classes.py
 f1_data = [[cls, report[cls]["f1-score"]] for cls in class_names]
 f1_table = wandb.Table(data=f1_data, columns=["class", "f1"])
 run.log({
@@ -447,7 +472,7 @@ Call `run.unwatch(model)` when done.
 Use `group` in `wandb.init()` to group runs by model or experiment:
 
 ```python
-wandb.init(group="Conv1DClassifier")  # all Conv1D runs grouped together
+wandb.init(group="ResNet1D")  # all ResNet1D runs grouped together
 ```
 
 In the UI, grouped runs can be **collapsed** and their metrics **averaged** automatically.
@@ -509,10 +534,10 @@ Line plots are auto-created for every metric logged with `wandb.log()`.
 - **Log scale**: toggle for loss curves
 - **Outlier handling**: toggle to clip or remove outliers
 
-**For the benchmark (`benchmark.py` auto-logs these):**
+**For the benchmark (`train4classes.py` auto-logs these):**
 
 - Plot `train/loss` and `val/loss` over `epoch` for each run → compare convergence speed
-- Group by `Conv1DClassifier` → see averaged curves across runs
+- Group by model architecture → see averaged curves across runs
 - Compare `val/accuracy` across dataset variants (filter by `dataset` config key)
 
 ---
@@ -610,7 +635,7 @@ Automate hyperparameter search across your models.
 ### 14.1 Sweep Configuration
 
 ```yaml
-program: benchmark.py
+program: train4classes.py
 method: bayes  # grid | random | bayes
 metric:
   name: val/accuracy
@@ -690,10 +715,10 @@ with wandb.init(project="particle-benchmark", job_type="training") as run:
 ### 15.3 Logging a Model Checkpoint
 
 ```python
-# From benchmark.py main()
+# From train4classes.py main()
 run.log_model(
     path=str(output_dir / "best_model.pth"),
-    name=f"Conv1D-{args.dataset_name}",
+    name=f"{args.model}-{args.dataset_name}-4class",
 )
 ```
 
@@ -739,13 +764,16 @@ Useful for profiling training efficiency and identifying bottlenecks.
 
 ## 18. Implementation Status
 
-> Status of the benchmark pipeline as implemented in `benchmark.py`.
+> Status of the benchmark pipeline as implemented in `train4classes.py`.
 
 ### Phase 1 — Setup & Config
 
 - [x]  Install `wandb` via pip (in `requirements.txt`)
 - [x]  Create project `particle-benchmark` on W&B
 - [x]  Define a standard config dict for all runs (22 keys including model, dataset, hyperparams, architecture)
+- [x]  Model zoo with 8 architectures (`models/`), all ~5.3M params, unified `create_model()` interface
+- [x]  `Conv1DClassifier` moved to `models/conv1d.py`
+- [x]  All models expose `feature_layer` attribute for hook-based feature extraction
 - [ ]  Log datasets as Artifacts for traceability
 
 ### Phase 2 — Training Loop Integration
@@ -765,12 +793,12 @@ Useful for profiling training efficiency and identifying bottlenecks.
 - [x]  Log `wandb.Table` with per-class Precision, Recall, F1, Support
 - [x]  Log `wandb.plot.pr_curve()` and `wandb.plot.roc_curve()`
 - [x]  Log bar charts for F1 per class
-- [x]  Generalization gap computed when real test set is provided
+- [x]  Generalization gap computed when real test set is provided (`train4classes.py --real-test-dir`)
 - [x]  Best model saved as W&B artifact via `run.log_model()`
 
 ### Phase 4 — Dimensionality Reduction (PCA / t-SNE)
 
-- [x]  Extract fc1 features (256-dim) via forward hook for all test sets
+- [x]  Extract feature_layer features (256-dim) via forward hook for all test sets (model-agnostic)
 - [x]  PCA and t-SNE scatter plots for synthetic test set, logged to W&B
 - [x]  PCA and t-SNE scatter plots for real test set (if provided)
 - [x]  Noise separation visualization: combined ID + noise latent space (PCA + t-SNE)
@@ -780,9 +808,9 @@ Useful for profiling training efficiency and identifying bottlenecks.
 - [x]  Load noise samples from `--noise-dir` with truncation + bandpass + decimation
 - [x]  MSP (Max Softmax Probability) scoring
 - [x]  Energy score (`-logsumexp(logits)`)
-- [x]  ODIN (temperature scaling + input perturbation, T=1000, ε=0.0012)
-- [x]  Mahalanobis distance (multi-layer: pool1, pool2, pool3, fc1 with GAP, class-conditional Gaussian, tied covariance)
-- [x]  Temperature scaling sweep (T ∈ [1, 2, 5, 10, 50, 100, 500, 1000]) for MSP and Energy
+- [x]  ODIN (temperature scaling + input perturbation, T=1000, epsilon=0.0012)
+- [x]  Mahalanobis distance — single-layer via `model.feature_layer` (works with all zoo models)
+- [x]  Temperature scaling sweep (T in [1, 2, 5, 10, 50, 100, 500, 1000]) for MSP and Energy
 - [x]  Energy_tuned: re-evaluation with optimal temperature from sweep
 - [x]  AUROC, FPR@95, AUPR for all methods
 - [x]  Score distribution histograms (ID vs noise) for all methods
@@ -791,14 +819,22 @@ Useful for profiling training efficiency and identifying bottlenecks.
 - [x]  Per-class OOD analysis (AUROC per class vs noise using MSP)
 - [x]  Silhouette score for latent space separability (ID vs noise)
 - [x]  Prediction distribution on noise (class assignment bar chart)
-- [x]  Summary table logged to W&B (all methods × all metrics)
+- [x]  Summary table logged to W&B (all methods x all metrics)
+
+### Phase 6 — Cluster Distances
+
+- [x]  Compute centroids per class + noise in feature space
+- [x]  Pairwise cosine distance matrix
+- [x]  Lower-triangular W&B Table + scalar summaries + heatmap
+- [x]  Available in `train4classes.py` (via `--noise-dir`)
+- [x]  `compute_cluster_distances.py` archived (functionality in `train4classes.py`)
 
 ### Future — Comparison & Reporting
 
 - [ ]  Use **Run Comparer** to diff top models
 - [ ]  Use **Grouping** (by model name) to see averaged curves
 - [ ]  Create scatter plots: accuracy vs training time, accuracy vs model size
-- [ ]  Build a summary `wandb.Table` as leaderboard (all models × all datasets × key metrics)
+- [ ]  Build a summary `wandb.Table` as leaderboard (all models x all datasets x key metrics)
 - [ ]  Create a **W&B Report** per dataset and one global summary
 - [ ]  Export as PDF if needed
 
@@ -807,38 +843,41 @@ Useful for profiling training efficiency and identifying bottlenecks.
 ## 19. Quick Reference — Code Cheat Sheet
 
 ```python
-# This mirrors the actual benchmark.py implementation.
-# See benchmark.py for the full runnable code.
+# This mirrors the actual train4classes.py implementation.
+# See train4classes.py for the full runnable code.
 
 import time
 import wandb
 import torch
 import numpy as np
 from sklearn.metrics import classification_report
-from train import (RAW_SIGNAL_LENGTH, ParticleDataset, Conv1DClassifier,
+from train import (RAW_SIGNAL_LENGTH, ParticleDataset,
                    BandpassFilter, Decimate, train_one_epoch, evaluate)
+from models import create_model, list_models
 
 # ============ INIT ============
 config = {
-    "model_name": "Conv1DClassifier",
+    "model_name": args.model,
     "model_size_params": num_params,
     "dataset": args.dataset_name,
     "dataset_size": train_size,
     "epochs": args.epochs,
     "batch_size": args.batch_size,
     "learning_rate": args.lr,
-    "optimizer": "Adam",
+    "optimizer": args.optimizer,          # "adam", "adamw", or "sgd"
     "seed": args.seed,
     "patience": args.patience,
     "scheduler": args.scheduler,
+    "weight_decay": args.weight_decay,
+    "augment": args.augment,
     # ... plus architecture-specific params
 }
 run = wandb.init(
     project="particle-benchmark",
     config=config,
-    group="Conv1DClassifier",
-    tags=[args.dataset_name, "benchmark"],
-    name=f"Conv1D-{args.dataset_name}-{args.run_id}",
+    group=args.model,                                 # group runs by model
+    tags=[args.dataset_name, "4class"],               # filterable tags
+    name=f"{args.model}-{args.dataset_name}-{args.run_id}",
     job_type="training",
 )
 run.define_metric("epoch")
@@ -928,7 +967,7 @@ run.log({f"{prefix}/f1_bar_chart": wandb.plot.bar(
     f1_table, "class", "f1", title=f"F1 per Class ({prefix})")})
 
 # Model artifact
-run.log_model(path=str(output_dir / "best_model.pth"), name=f"Conv1D-{args.dataset_name}")
+run.log_model(path=str(output_dir / "best_model.pth"), name=f"{args.model}-{args.dataset_name}-4class")
 
 run.finish()
 ```

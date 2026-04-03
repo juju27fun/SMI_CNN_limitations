@@ -1,8 +1,10 @@
 # OOD Detection in the Benchmark Pipeline — Full Data Flow
 
+> **Note:** This report was written against the legacy `benchmark.py` (now in `archive/`). The OOD pipeline is now in `train4classes.py` using single-layer Mahalanobis via `model.feature_layer` (works with all zoo models).
+
 ## Overview
 
-The benchmark (`benchmark.py`) implements **5 OOD detection methods** to distinguish in-distribution (ID) particle signals from noise. The pipeline runs in **Phase 5** after the model is trained and evaluated on test sets.
+The pipeline implements **5 OOD detection methods** to distinguish in-distribution (ID) particle signals from noise, running after the model is trained and evaluated on test sets.
 
 **Methods**: MSP, Energy, ODIN, Mahalanobis (multi-layer), Energy_tuned (temperature-optimized)
 

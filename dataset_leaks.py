@@ -359,8 +359,8 @@ def main():
         description="Detect data leaks in a deep learning dataset."
     )
     parser.add_argument(
-        "dataset", type=str, nargs="?", default="dataset",
-        help="Path to dataset root (default: dataset)",
+        "dataset", type=str, nargs="?", default="data/dataset",
+        help="Path to dataset root (default: data/dataset)",
     )
     parser.add_argument(
         "--report-dir", type=str, default="leak_reports",

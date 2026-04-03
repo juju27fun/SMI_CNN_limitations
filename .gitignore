@@ -1,11 +1,8 @@
 # Claude Code
 .claude/
 
-# Datasets (real and synthetic)
-dataset/
-Noise/
-v_*/
-dataset_*/
+# Datasets (all under data/)
+data/
 
 # Python
 venv/
@@ -21,23 +18,7 @@ wandb/
 .netrc
 
 # Reports
-leak_reports/
 *_full_analysis/
 *_Noise_Analysis.pdf
 audit_results/
 audit_manifest.json
-temporary_report.md
-dataset_f1/
-dataset_nof1/
-S0_baseline/
-S1_white/
-S2_colored/
-S3_realistic/
-S4_real_noise/
-S5_signal_realism/
-S6_noise_realism/
-S7_pure_real/
-S8_colored_low/
-S9_colored_high/
-S_union/
-S10_white_strong/

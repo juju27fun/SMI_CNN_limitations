@@ -72,7 +72,7 @@ def extract_fc1_features(model, loader, device):
     def hook_fn(m, inp, out):
         activations.append(out.detach().cpu())
 
-    hook = model.fc1.register_forward_hook(hook_fn)
+    hook = model.feature_layer.register_forward_hook(hook_fn)
     with torch.no_grad():
         for signals, labels in loader:
             signals = signals.to(device)
