@@ -23,24 +23,32 @@ def _make_vgg_block(in_ch, out_ch, num_convs):
 class VGG1D(nn.Module):
     """VGG-style 1D classifier."""
 
-    def __init__(self, input_length: int = 625, num_classes: int = 4, dropout: float = 0.3):
+    def __init__(self, input_length: int = 625, num_classes: int = 4, dropout: float = 0.3,
+                 width_mult: float = 1.0):
         super().__init__()
 
+        b1 = max(1, int(64 * width_mult))
+        b2 = max(1, int(128 * width_mult))
+        b3 = max(1, int(256 * width_mult))
+        b4 = max(1, int(256 * width_mult))
+        fc1_out = max(1, int(400 * width_mult))
+        fc2_out = max(1, int(256 * width_mult))
+
         # Conv blocks: [in_ch, out_ch, num_convs]
-        self.block1 = _make_vgg_block(1, 64, 2)      # -> /2
-        self.block2 = _make_vgg_block(64, 128, 2)     # -> /4
-        self.block3 = _make_vgg_block(128, 256, 3)    # -> /8
-        self.block4 = _make_vgg_block(256, 256, 3)    # -> /16
+        self.block1 = _make_vgg_block(1, b1, 2)      # -> /2
+        self.block2 = _make_vgg_block(b1, b2, 2)     # -> /4
+        self.block3 = _make_vgg_block(b2, b3, 3)     # -> /8
+        self.block4 = _make_vgg_block(b3, b4, 3)     # -> /16
 
         flat_len = input_length // 2 // 2 // 2 // 2
-        flatten_size = 256 * flat_len
+        flatten_size = b4 * flat_len
 
         self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(flatten_size, 400)
+        self.fc1 = nn.Linear(flatten_size, fc1_out)
         self.drop1 = nn.Dropout(dropout)
-        self.feature_layer = nn.Linear(400, 256)
+        self.feature_layer = nn.Linear(fc1_out, fc2_out)
         self.drop2 = nn.Dropout(dropout)
-        self.classifier = nn.Linear(256, num_classes)
+        self.classifier = nn.Linear(fc2_out, num_classes)
 
     def forward(self, x):
         x = self.block1(x)

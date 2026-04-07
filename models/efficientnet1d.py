@@ -82,7 +82,7 @@ class EfficientNet1D(nn.Module):
     """EfficientNet-B0 style 1D classifier."""
 
     def __init__(self, input_length: int = 625, num_classes: int = 4, dropout: float = 0.2,
-                 width_mult: float = 0.85):
+                 width_mult: float = 0.85, head_ch: int = None):
         super().__init__()
 
         # Block configs: [expand_ratio, out_channels, num_blocks, stride, kernel_size]
@@ -120,7 +120,8 @@ class EfficientNet1D(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
         # Head
-        head_ch = _make_divisible(1280 * width_mult) if width_mult > 1.0 else 1280
+        if head_ch is None:
+            head_ch = _make_divisible(1280 * width_mult) if width_mult > 1.0 else 1280
         self.head = nn.Sequential(
             nn.Conv1d(in_ch, head_ch, 1, bias=False),
             nn.BatchNorm1d(head_ch),

@@ -53,7 +53,7 @@ class MobileNet1D(nn.Module):
     """MobileNetV2-style 1D classifier."""
 
     def __init__(self, input_length: int = 625, num_classes: int = 4, dropout: float = 0.2,
-                 width_mult: float = 1.5):
+                 width_mult: float = 1.5, last_ch: int = None):
         super().__init__()
 
         # Inverted residual settings: [expand_ratio, out_channels, num_blocks, stride]
@@ -87,7 +87,8 @@ class MobileNet1D(nn.Module):
         self.blocks = nn.Sequential(*blocks)
 
         # Head
-        last_ch = _make_divisible(1280 * width_mult) if width_mult > 1.0 else 1280
+        if last_ch is None:
+            last_ch = _make_divisible(1280 * width_mult) if width_mult > 1.0 else 1280
         self.head_conv = nn.Sequential(
             nn.Conv1d(in_ch, last_ch, 1, bias=False),
             nn.BatchNorm1d(last_ch),

@@ -199,11 +199,11 @@ def main():
         run_post_testing(run, model, test_loader, criterion, device, CLASS_NAMES)
 
         # ── Inference latency ──
-        latency_ms = measure_inference_latency(
+        latency = measure_inference_latency(
             model, (1, 1, input_length), device
         )
-        run.summary["inference_latency_ms"] = latency_ms
-        print(f"  Inference latency: {latency_ms:.2f} ms/sample")
+        run.summary["inference_latency_ms"] = latency["median_ms"]
+        print(f"  Inference latency: {latency['median_ms']:.2f} ms/sample")
 
         # Save model as W&B artifact
         run.log_model(

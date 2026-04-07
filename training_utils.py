@@ -8,8 +8,11 @@ Provides common functions used by both train3classes_proof.py and train4classes.
 - Common argparse arguments
 """
 
+import os
 import time
+import tempfile
 
+import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -43,8 +46,11 @@ def compute_model_macs(model, input_shape, device):
     return int(macs)
 
 
-def measure_inference_latency(model, input_shape, device, n_runs=100, warmup=10):
-    """Measure average per-sample inference latency in milliseconds."""
+def measure_inference_latency(model, input_shape, device, n_runs=1000, warmup=50):
+    """Measure per-sample inference latency in milliseconds.
+
+    Returns dict with median_ms, p95_ms, mean_ms.
+    """
     model.eval()
     dummy = torch.randn(*input_shape).to(device)
     with torch.no_grad():
@@ -52,13 +58,78 @@ def measure_inference_latency(model, input_shape, device, n_runs=100, warmup=10)
             model(dummy)
     if device.type == "cuda":
         torch.cuda.synchronize()
-    start = time.time()
+
+    timings = []
     with torch.no_grad():
         for _ in range(n_runs):
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            start = time.perf_counter()
             model(dummy)
-    if device.type == "cuda":
-        torch.cuda.synchronize()
-    return (time.time() - start) / n_runs * 1000
+            if device.type == "cuda":
+                torch.cuda.synchronize()
+            timings.append((time.perf_counter() - start) * 1000)
+
+    timings = np.array(timings)
+    return {
+        "median_ms": float(np.median(timings)),
+        "p95_ms": float(np.percentile(timings, 95)),
+        "mean_ms": float(np.mean(timings)),
+    }
+
+
+def measure_peak_ram(model, input_shape, device):
+    """Measure peak RAM during a single forward pass. Returns MB.
+
+    Uses torch.cuda memory stats on GPU, or activation-tracing on CPU.
+    """
+    model.eval()
+    model_device = next(model.parameters()).device
+
+    if model_device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(model_device)
+        dummy = torch.randn(*input_shape).to(model_device)
+        with torch.no_grad():
+            model(dummy)
+        peak = torch.cuda.max_memory_allocated(model_device)
+        return peak / (1024 * 1024)
+
+    # CPU: capture intermediate activation sizes via hooks
+    activation_sizes = []
+    hooks = []
+    for mod in model.modules():
+        def hook_fn(module, inp, out, _sizes=activation_sizes):
+            if isinstance(out, torch.Tensor):
+                _sizes.append(out.nelement() * out.element_size())
+        hooks.append(mod.register_forward_hook(hook_fn))
+
+    dummy = torch.randn(*input_shape)
+    with torch.no_grad():
+        model(dummy)
+
+    for h in hooks:
+        h.remove()
+
+    # Peak = model params + max single activation + input
+    param_bytes = sum(p.nelement() * p.element_size() for p in model.parameters())
+    input_bytes = dummy.nelement() * dummy.element_size()
+    max_act = max(activation_sizes) if activation_sizes else 0
+    peak_bytes = param_bytes + input_bytes + max_act
+    return peak_bytes / (1024 * 1024)
+
+
+def measure_model_size(model):
+    """Measure param count and on-disk state_dict size.
+
+    Returns (params: int, size_mb: float).
+    """
+    params = sum(p.numel() for p in model.parameters())
+    with tempfile.NamedTemporaryFile(suffix=".pth", delete=False) as tmp:
+        tmp_path = tmp.name
+    torch.save(model.state_dict(), tmp_path)
+    size_mb = os.path.getsize(tmp_path) / 1e6
+    os.unlink(tmp_path)
+    return params, size_mb
 
 
 # ──────────────────────────────────────────────
@@ -271,8 +342,9 @@ def add_common_training_args(parser, data_dir_default="data/dataset"):
         parser: argparse.ArgumentParser instance
         data_dir_default: Default value for --data-dir
     """
+    all_model_names = list_models(include_variants=True)
     parser.add_argument("--model", type=str, default="Conv1D",
-                        choices=list_models(),
+                        choices=all_model_names,
                         help=f"Model architecture ({', '.join(list_models())})")
     parser.add_argument("--data-dir", type=str, default=data_dir_default,
                         help="Path to dataset root (train/test)")

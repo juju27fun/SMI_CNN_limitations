@@ -88,18 +88,109 @@ class Truncate:
 
 
 class GaussianNoise:
-    """Additive Gaussian noise with configurable SNR (dB). Applied with probability p."""
-    def __init__(self, snr_db: float = 20.0, p: float = 0.5):
+    """Additive Gaussian noise with configurable SNR (dB). Applied with probability p.
+
+    If ``snr_range`` is provided as a (low_db, high_db) tuple, a fresh SNR is
+    drawn uniformly per call. Otherwise the fixed ``snr_db`` value is used.
+    """
+    def __init__(self, snr_db: float = 20.0, snr_range: tuple = None, p: float = 0.5):
         self.snr_db = snr_db
+        self.snr_range = snr_range
         self.p = p
 
     def __call__(self, signal: torch.Tensor) -> torch.Tensor:
         if torch.rand(1).item() > self.p:
             return signal
+        if self.snr_range is not None:
+            low, high = self.snr_range
+            snr_db = low + torch.rand(1).item() * (high - low)
+        else:
+            snr_db = self.snr_db
         sig_power = signal.pow(2).mean()
-        noise_power = sig_power / (10 ** (self.snr_db / 10))
+        noise_power = sig_power / (10 ** (snr_db / 10))
         noise = torch.randn_like(signal) * noise_power.sqrt()
         return signal + noise
+
+
+class RealNoise:
+    """Additive real captured noise.
+
+    Loads ``.npy`` files from ``noise_dir`` once at construction time, then on
+    each call extracts a random segment of the same length as the input signal
+    and scales it to a per-sample SNR drawn uniformly from ``snr_range``.
+
+    Notes
+    -----
+    - The noise files are *not* bandpass-filtered. They are added to the
+      already-bandpassed/decimated signal so out-of-band noise content
+      survives in the final composite — this avoids the trivial-filter pitfall
+      that white Gaussian noise suffers from when a bandpass is in the chain.
+    - The internal RNG is a ``numpy.random.default_rng`` so it remains
+      picklable across DataLoader workers.
+    """
+
+    def __init__(self, noise_dir: str, snr_range: tuple = (-3.0, 3.0),
+                 p: float = 1.0, seed: int = 42):
+        import glob
+        self.snr_range = snr_range
+        self.p = p
+        self._rng = np.random.default_rng(seed)
+
+        files = sorted(glob.glob(os.path.join(noise_dir, "*.npy")))
+        if not files:
+            raise FileNotFoundError(f"No .npy noise files found in {noise_dir!r}")
+        self._noise_arrays = [np.load(f).astype(np.float32) for f in files]
+
+    def __call__(self, signal: torch.Tensor) -> torch.Tensor:
+        if self._rng.random() > self.p:
+            return signal
+
+        L = signal.size(-1)
+        # Pick a noise file with at least L samples (fall back to longest)
+        valid = [a for a in self._noise_arrays if a.shape[-1] >= L]
+        if not valid:
+            raise ValueError(
+                f"No noise file in pool has length >= {L} samples"
+            )
+        noise_arr = valid[self._rng.integers(0, len(valid))]
+        max_offset = noise_arr.shape[-1] - L
+        offset = int(self._rng.integers(0, max_offset + 1))
+        segment = noise_arr[offset:offset + L]
+        noise = torch.from_numpy(np.ascontiguousarray(segment))
+
+        sig_power = signal.pow(2).mean()
+        noise_power_actual = noise.pow(2).mean()
+        if noise_power_actual.item() == 0:
+            return signal
+
+        low, high = self.snr_range
+        snr_db = low + float(self._rng.random()) * (high - low)
+        target_noise_power = sig_power / (10 ** (snr_db / 10))
+        scale = (target_noise_power / noise_power_actual).sqrt()
+        return signal + noise * scale
+
+
+class TimeMasking:
+    """Zero out a single random temporal block of the signal.
+
+    ``mask_ratio`` is the fraction of the signal length to mask.
+    """
+
+    def __init__(self, mask_ratio: float = 0.15, p: float = 1.0):
+        self.mask_ratio = mask_ratio
+        self.p = p
+
+    def __call__(self, signal: torch.Tensor) -> torch.Tensor:
+        if torch.rand(1).item() > self.p:
+            return signal
+        L = signal.size(-1)
+        block_len = int(L * self.mask_ratio)
+        if block_len <= 0:
+            return signal
+        start = int(torch.randint(0, L - block_len + 1, (1,)).item())
+        signal = signal.clone()
+        signal[..., start:start + block_len] = 0
+        return signal
 
 
 class TimeShift:
