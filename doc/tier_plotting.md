@@ -309,31 +309,52 @@ this checklist so it slots cleanly into the existing system.
 7. **Set `fig.subplots_adjust(left=…, right=…, top=…, bottom=…)`
    manually** — never `tight_layout`, which defeats
    `savefig.bbox="standard"` and drifts the canvas size.
-8. **Save with `fig.savefig(figures_dir / "name.pdf")`** — no PNG.
-9. **Wire the new function into both call sites** in `main()` —
-   the `--aggregate-only` path near line 1521 and the post-training
-   path near line 1567. The tier figures are *not* gated on
-   `--scaling` because tier-axis data is collected by every run.
-10. **Document the new figure here** by adding a row to §3 and an
-    interpretation paragraph to §5.
+8. **Save via `_emit_pdf(fig, figures_dir, "name.pdf", wandb_run=wandb_run,
+   wandb_key="figures/tier/<slug>", caption=...)`** — the helper
+   writes the PDF, optionally logs a `wandb.Image` preview under the
+   supplied media key, and closes the Figure. No PNG sibling file is
+   written.
+9. **Accept `wandb_run=None` as a keyword-only parameter** on the
+   `generate_*` function signature and forward it to `_emit_pdf`. This
+   lets the benchmark-report orchestrator (§10) group every tier
+   figure under one W&B run, while still keeping the function callable
+   standalone with no W&B publishing.
+10. **Add the new function to `regenerate_and_publish_figures`** in
+    `benchmark_zoo.py` (around line 1433). The two wiring blocks in
+    `main()` now dispatch through that single orchestrator, so a new
+    figure only needs to be wired once — and it is *not* gated on
+    `--scaling` because tier-axis data is collected by every run.
+11. **Document the new figure here** by adding a row to §3, an
+    interpretation paragraph to §5, and — if it needs its own W&B
+    panel — a row to the §10 media-key table.
 
 ---
 
 ## 9 — File and code references
 
-- `benchmark_zoo.py:97-136` — `FAMILY_COLORS`, `FAMILY_MARKERS`,
+- `benchmark_zoo.py:96-135` — `FAMILY_COLORS`, `FAMILY_MARKERS`,
   `FAMILY_LINESTYLES` (shared with variant figures; all three dicts
   have 8 unique entries).
-- `benchmark_zoo.py:146-175` — figure size constants and `PUB_RC`.
-- `benchmark_zoo.py:178-183` — `apply_publication_style()`.
-- `benchmark_zoo.py:1054-1107` — `_load_all_tiers_aggregated`
+- `benchmark_zoo.py:142-171` — figure size constants and `PUB_RC`.
+- `benchmark_zoo.py:174-179` — `apply_publication_style()`.
+- `benchmark_zoo.py:182-216` — `_emit_pdf` helper (saves PDF, closes
+  `Figure`, optional `wandb.Image` logging — shared with variant
+  figures).
+- `benchmark_zoo.py:1093-1144` — `_load_all_tiers_aggregated`
   (base-models-only, tier-6 column handling).
-- `benchmark_zoo.py:1108-1165` — `generate_tier_robustness`.
-- `benchmark_zoo.py:1166-1222` — `generate_tier_grid`.
-- `benchmark_zoo.py:1223-1279` — `generate_tier6_domain_gap`.
-- `benchmark_zoo.py:1280-1330` — `generate_tier_heatmap`.
-- `benchmark_zoo.py:1521-1524` — wiring in the `--aggregate-only` path.
-- `benchmark_zoo.py:1567-1570` — wiring in the post-training path.
+- `benchmark_zoo.py:1147-1209` — `generate_tier_robustness`.
+- `benchmark_zoo.py:1211-1272` — `generate_tier_grid`.
+- `benchmark_zoo.py:1274-1335` — `generate_tier6_domain_gap`.
+- `benchmark_zoo.py:1337-1390` — `generate_tier_heatmap`.
+- `benchmark_zoo.py:1395-1434` — `_attach_report_artifacts` (uploads
+  PDFs + `summary.csv` + `leaderboard.md` as a single `wandb.Artifact`
+  and writes headline metrics to `run.summary`).
+- `benchmark_zoo.py:1433-1497` — `regenerate_and_publish_figures`
+  (single orchestrator for every publication figure; opens the
+  report run when `wandb_publish=True`).
+- `benchmark_zoo.py:1691-1695` and `:1727-1731` — wiring in
+  `main()`; both `--aggregate-only` and post-training paths dispatch
+  through `regenerate_and_publish_figures`.
 
 Regenerate every tier figure from cached JSON results without
 retraining:
@@ -347,3 +368,64 @@ Note: `--scaling` is **not** required. The four tier figures are
 always regenerated during aggregation; `--scaling` only controls the
 additional variant figures documented in
 [`variant_plotting.md`](variant_plotting.md).
+
+---
+
+## 10 — Publishing to W&B
+
+Every tier figure is also pushed to a dedicated **benchmark report**
+Weights & Biases run whenever `regenerate_and_publish_figures` runs
+without `--no-wandb-publish`. This happens automatically in both the
+`--aggregate-only` path and the post-training path; no extra CLI flag
+is required to *enable* publishing — it's the default.
+
+See [`variant_plotting.md` §10](variant_plotting.md) for the full
+report-run contract (project, name template, group, job_type, tags,
+offline behaviour, artifact contents and opt-out). This section only
+describes the tier-specific parts.
+
+### 10.1 — Tier-axis media keys
+
+The tier figures share a single `figures/tier/*` namespace, so they
+land together in the W&B media panel — directly alongside their
+`figures/variant/*` siblings:
+
+| Function                    | Local file             | W&B key                       |
+|-----------------------------|------------------------|-------------------------------|
+| `generate_tier_heatmap`     | `tier_heatmap.pdf`     | `figures/tier/heatmap`        |
+| `generate_tier_robustness`  | `tier_robustness.pdf`  | `figures/tier/robustness`     |
+| `generate_tier_grid`        | `tier_grid.pdf`        | `figures/tier/robustness_grid`|
+| `generate_tier6_domain_gap` | `tier6_domain_gap.pdf` | `figures/tier/domain_gap_t6`  |
+
+The four tier figures are logged unconditionally because they do not
+depend on `--scaling` — every benchmark run produces the underlying
+tier-axis data. The variant figures under `figures/variant/*` are
+logged only when `--scaling` is also set.
+
+### 10.2 — What lands in the artifact
+
+The `benchmark2-report` artifact uploaded by
+`_attach_report_artifacts` contains **all** PDFs emitted to
+`results/<run>/figures/`, tier *and* variant. The tier PDFs land
+under `figures/tier_*.pdf` inside the artifact (no per-axis
+sub-directory — the `figures/tier/*` split is a W&B media-panel
+convention, not a filesystem one). The PDFs are the vector originals;
+the `figures/tier/*` media keys contain PNG rasterisations for quick
+browsing only.
+
+### 10.3 — Opting out
+
+Identical to the variant path: use `--no-wandb-publish` to keep the
+local PDFs but skip the report run entirely, or pair with
+`--wandb-offline` to publish to the local offline cache without
+requiring credentials.
+
+```bash
+# Tier-only aggregation, no W&B side effect
+python benchmark_zoo.py --aggregate-only \
+    --output-dir results/benchmark2 --no-wandb-publish
+
+# Tier-only aggregation, published to offline cache
+python benchmark_zoo.py --aggregate-only \
+    --output-dir results/benchmark2 --wandb-offline
+```

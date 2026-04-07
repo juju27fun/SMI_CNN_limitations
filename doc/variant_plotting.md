@@ -298,39 +298,132 @@ checklist so it slots cleanly into the existing system.
 4. **Set `fig.subplots_adjust(left=…, right=…, top=…, bottom=…)`
    manually** so the canvas matches sibling figures. Do not rely on
    `tight_layout` — it breaks `savefig.bbox="standard"`.
-5. **Save with `fig.savefig(figures_dir / "name.pdf")`** — no PNG
-   variant unless explicitly requested. The 4 stale PNGs
-   (`scaling_curves.png`, `scaling_curves_latency.png`,
-   `pareto_accuracy_vs_macs.png`, `pareto_accuracy_vs_latency.png`)
-   were removed in the publication-quality refactor and should not
-   come back.
-6. **Add the new function to both call sites** in `main()`
-   (`--aggregate-only` path around line 1510 and main path around
-   line 1552). Otherwise the figure will only regenerate after a full
-   benchmark run, not from cached results.
-7. **Document the new figure here** by adding a row to §3 and an
-   interpretation paragraph to §5.
+5. **Save via `_emit_pdf(fig, figures_dir, "name.pdf", wandb_run=wandb_run,
+   wandb_key="figures/variant/<slug>", caption=...)`** — the helper
+   writes the PDF, optionally logs a `wandb.Image` preview under the
+   supplied media key, and closes the Figure. No PNG sibling file is
+   written. The 4 stale PNGs (`scaling_curves.png`,
+   `scaling_curves_latency.png`, `pareto_accuracy_vs_macs.png`,
+   `pareto_accuracy_vs_latency.png`) were removed in the
+   publication-quality refactor and should not come back.
+6. **Accept `wandb_run=None` as a keyword-only parameter** on the
+   `generate_*` function signature and forward it to `_emit_pdf`. This
+   lets the benchmark-report orchestrator (§10) group every figure
+   under one W&B run, while still keeping the function callable
+   standalone with no W&B publishing.
+7. **Add the new function to `regenerate_and_publish_figures`** in
+   `benchmark_zoo.py` (around line 1433). The two wiring blocks in
+   `main()` now dispatch through that single orchestrator, so a new
+   figure only needs to be wired once.
+8. **Document the new figure here** by adding a row to §3, an
+   interpretation paragraph to §5, and — if it needs its own W&B
+   panel — a row to the §10 media-key table.
 
 ---
 
 ## 9 — File and code references
 
-- `benchmark_zoo.py:97-136` — `FAMILY_COLORS`, `FAMILY_MARKERS`,
+- `benchmark_zoo.py:96-135` — `FAMILY_COLORS`, `FAMILY_MARKERS`,
   `FAMILY_LINESTYLES` (all three dicts have 8 unique entries).
-- `benchmark_zoo.py:146-175` — figure size constants and `PUB_RC`.
-- `benchmark_zoo.py:178-183` — `apply_publication_style()`.
-- `benchmark_zoo.py:794-894` — `generate_scaling_curves` (only emits
+- `benchmark_zoo.py:142-171` — figure size constants and `PUB_RC`.
+- `benchmark_zoo.py:174-179` — `apply_publication_style()`.
+- `benchmark_zoo.py:182-216` — `_emit_pdf` helper (saves PDF, closes
+  `Figure`, optional `wandb.Image` logging).
+- `benchmark_zoo.py:807-911` — `generate_scaling_curves` (only emits
   `scaling_macs.pdf`).
-- `benchmark_zoo.py:895-957` — `generate_scaling_grid` (sorted by
+- `benchmark_zoo.py:913-980` — `generate_scaling_grid` (sorted by
   `macs`, not by size-tag ordinal).
-- `benchmark_zoo.py:958-1053` — `generate_pareto_publication`
+- `benchmark_zoo.py:982-1091` — `generate_pareto_publication`
   (parameterised on `x_col`, `x_label`, `x_log`, `fname`).
-- `benchmark_zoo.py:1526-1533` and `:1572-1579` — wiring; both emit
-  `pareto.pdf` and `pareto_latency.pdf`.
+- `benchmark_zoo.py:1395-1434` — `_attach_report_artifacts` (uploads
+  PDFs + `summary.csv` + `leaderboard.md` as a single `wandb.Artifact`
+  and writes headline metrics to `run.summary`).
+- `benchmark_zoo.py:1433-1497` — `regenerate_and_publish_figures`
+  (single orchestrator for every publication figure; opens the
+  report run when `wandb_publish=True`).
+- `benchmark_zoo.py:1691-1695` and `:1727-1731` — wiring in
+  `main()`; both `--aggregate-only` and post-training paths dispatch
+  through `regenerate_and_publish_figures`.
 
 Regenerate every figure from cached JSON results without retraining:
 
 ```bash
 source venv/bin/activate
 python benchmark_zoo.py --aggregate-only --scaling --output-dir results/benchmark2
+```
+
+---
+
+## 10 — Publishing to W&B
+
+Every publication figure is also pushed to a dedicated **benchmark
+report** Weights & Biases run whenever `regenerate_and_publish_figures`
+runs without `--no-wandb-publish`. This happens automatically in both
+the `--aggregate-only` path and the post-training path; no extra CLI
+flag is required to *enable* publishing — it's the default.
+
+### 10.1 — The report run
+
+| W&B field  | Value                                  |
+|------------|----------------------------------------|
+| `project`  | `particle-benchmark` (same as training runs) |
+| `name`     | `benchmark2-report-YYYYMMDDTHHMMSS` (ISO timestamp keeps it sortable and collision-free across aggregations) |
+| `group`    | `benchmark2-report` (distinct from per-model training groups) |
+| `job_type` | `benchmark-report` |
+| `tags`     | `["benchmark2", "report", "publication", <dataset_name>]` where `dataset_name = Path(args.data_dir).name` |
+| `mode`     | `"offline"` when `--wandb-offline` is set, otherwise `"online"` |
+
+The report run is intentionally *not* a per-model training run: the
+training runs fan out one per `(model, tier, seed)` and report
+training-loop metrics, while the report run reports cross-model
+aggregates. Keeping them in the same project but separate groups lets
+you filter the W&B UI to either view.
+
+### 10.2 — Variant-axis media keys
+
+The variant figures share a single `figures/variant/*` namespace, so
+they land together in the W&B media panel:
+
+| Function                      | Local file            | W&B key                          |
+|-------------------------------|-----------------------|----------------------------------|
+| `generate_scaling_curves`     | `scaling_macs.pdf`    | `figures/variant/scaling_macs`   |
+| `generate_scaling_grid`       | `scaling_grid.pdf`    | `figures/variant/scaling_grid`   |
+| `generate_pareto_publication` | `pareto.pdf`          | `figures/variant/pareto_macs`    |
+| `generate_pareto_publication` | `pareto_latency.pdf`  | `figures/variant/pareto_latency` |
+
+The `pareto` key is dispatched on `fname` inside the function (see
+`benchmark_zoo.py:1078-1087`), so the two invocations land on two
+distinct panels rather than overwriting each other.
+
+### 10.3 — The `benchmark2-report` artifact
+
+Every report run also uploads a single
+`wandb.Artifact(name="benchmark2-report", type="benchmark-report")`
+that contains the *original vector PDFs* under `figures/*.pdf` plus
+`summary.csv` and `leaderboard.md` at the artifact root. The PDFs are
+what the paper actually `\includegraphics{}`s — the `wandb.Image`
+previews logged under the `figures/` media keys are PNG rasterisations
+that exist for quick browsing in the web UI.
+
+A few headline metrics are also written to `run.summary`:
+`num_models`, `num_families`, `num_tiers`, `num_results`,
+`best_tier1_model`, `best_tier1_accuracy`.
+
+### 10.4 — Opting out
+
+Use `--no-wandb-publish` to skip the report run entirely. The local
+PDFs are still emitted to `results/<run>/figures/` (that's the point
+of the existing layout discipline), only the W&B side is disabled.
+Pair with `--wandb-offline` if you want to publish but don't have
+online credentials — both paths use the same offline cache under
+`wandb/offline-run-*`.
+
+```bash
+# Publish locally only, no W&B side effect
+python benchmark_zoo.py --aggregate-only --scaling \
+    --output-dir results/benchmark2 --no-wandb-publish
+
+# Publish to offline W&B cache (sync later with `wandb sync`)
+python benchmark_zoo.py --aggregate-only --scaling \
+    --output-dir results/benchmark2 --wandb-offline
 ```

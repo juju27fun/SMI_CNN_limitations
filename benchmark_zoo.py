@@ -179,6 +179,42 @@ def apply_publication_style():
     plt.rcParams.update(PUB_RC)
 
 
+def _emit_pdf(fig, figures_dir, fname, *, wandb_run=None,
+              wandb_key=None, caption=None):
+    """Save a publication PDF and (optionally) log it to a W&B run.
+
+    The matplotlib ``Figure`` is also closed here so callers do not have
+    to. When ``wandb_run`` is provided the figure is logged via
+    ``wandb.Image(fig, caption=...)`` which rasterises the Figure to PNG
+    in-memory — **no PNG sibling file is written to disk**, preserving
+    the existing "no PNG variants" convention from
+    ``doc/variant_plotting.md`` §8.5.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        The figure to save.
+    figures_dir : pathlib.Path
+        Output directory for the PDF.
+    fname : str
+        Output filename (must end with ``.pdf``).
+    wandb_run : wandb.sdk.wandb_run.Run, optional
+        Active W&B run. If ``None`` no W&B logging happens (the default,
+        backwards-compatible behaviour).
+    wandb_key : str, optional
+        Media key (e.g. ``figures/tier/heatmap``) under which the figure
+        is logged. Required when ``wandb_run`` is provided.
+    caption : str, optional
+        Caption shown on hover in the W&B media panel. Defaults to
+        ``wandb_key`` when omitted.
+    """
+    fig.savefig(figures_dir / fname)
+    if wandb_run is not None and wandb_key is not None:
+        wandb_run.log({wandb_key: wandb.Image(fig, caption=caption or wandb_key)})
+    plt.close(fig)
+    print(f"  Saved {figures_dir / fname}")
+
+
 def infer_size_tag(model_name: str) -> str:
     """Return size tag (Pico/Nano/XXS/XS/S/M/L) inferred from a model variant name."""
     for suffix in ("-Pico", "-Nano", "-XXS", "-XS", "-S", "-L"):
@@ -768,7 +804,7 @@ def _load_tier1_aggregated(output_dir):
     return agg, families
 
 
-def generate_scaling_curves(output_dir):
+def generate_scaling_curves(output_dir, *, wandb_run=None):
     """Publication-quality scaling curves (single-column figure).
 
     Produces:
@@ -780,6 +816,9 @@ def generate_scaling_curves(output_dir):
     envelope can render cleanly. Accuracy-vs-latency is now shown as
     ``pareto_latency.pdf`` (scatter + global Pareto front), which handles
     such clumps gracefully.
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under the media key ``figures/variant/scaling_macs``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -863,17 +902,22 @@ def generate_scaling_curves(output_dir):
         # Manual margins so the canvas size matches pareto.pdf exactly,
         # enabling side-by-side placement in LaTeX subfigures.
         fig.subplots_adjust(left=0.16, right=0.97, top=0.97, bottom=0.32)
-        fig.savefig(figures_dir / fname)
-        plt.close(fig)
+        _emit_pdf(
+            fig, figures_dir, fname,
+            wandb_run=wandb_run,
+            wandb_key="figures/variant/scaling_macs",
+            caption="Scaling curve: per-family upper envelope (Accuracy vs MACs)",
+        )
 
-    print(f"Publication scaling curve saved to {figures_dir}/scaling_macs.pdf")
 
-
-def generate_scaling_grid(output_dir):
+def generate_scaling_grid(output_dir, *, wandb_run=None):
     """2x4 small-multiples: one scaling curve per family, shared axes.
 
     Designed as a double-column figure for an overview of all family
     scaling behaviours without the visual clutter of the combined plot.
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under the media key ``figures/variant/scaling_grid``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -927,13 +971,17 @@ def generate_scaling_grid(output_dir):
     fig.supylabel("Accuracy", fontsize=8, x=0.005)
     fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.10,
                         wspace=0.12, hspace=0.40)
-    fig.savefig(figures_dir / "scaling_grid.pdf")
-    plt.close(fig)
-    print(f"Scaling grid saved to {figures_dir}/scaling_grid.pdf")
+    _emit_pdf(
+        fig, figures_dir, "scaling_grid.pdf",
+        wandb_run=wandb_run,
+        wandb_key="figures/variant/scaling_grid",
+        caption="Scaling grid: per-family small-multiples (Accuracy vs MACs)",
+    )
 
 
 def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
-                                x_log=True, fname="pareto.pdf"):
+                                x_log=True, fname="pareto.pdf", *,
+                                wandb_run=None):
     """Publication-quality Pareto plot (single column).
 
     Highlights points that lie on the Pareto front. No per-point text labels.
@@ -945,6 +993,10 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
     with latency clumps caused by kernel-launch overhead on small variants —
     unlike the scaling-envelope curve, which becomes unreadable when multiple
     variants share the same latency but have very different accuracies.
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under either ``figures/variant/pareto_macs`` or
+    ``figures/variant/pareto_latency``, dispatched on ``fname``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -1023,9 +1075,19 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
     fig.subplots_adjust(left=0.16, right=0.97, top=0.97, bottom=0.32)
-    fig.savefig(figures_dir / fname)
-    plt.close(fig)
-    print(f"Pareto plot saved to {figures_dir}/{fname}")
+    # The pareto function is called twice with different ``fname`` values
+    # (``pareto.pdf`` and ``pareto_latency.pdf``); each gets a distinct
+    # W&B media key so they show up as separate panels in the report run.
+    if "latency" in fname:
+        wandb_key = "figures/variant/pareto_latency"
+        caption = "Pareto front: Accuracy vs Latency"
+    else:
+        wandb_key = "figures/variant/pareto_macs"
+        caption = "Pareto front: Accuracy vs MACs"
+    _emit_pdf(
+        fig, figures_dir, fname,
+        wandb_run=wandb_run, wandb_key=wandb_key, caption=caption,
+    )
 
 
 def _load_all_tiers_aggregated(output_dir):
@@ -1082,12 +1144,15 @@ def _load_all_tiers_aggregated(output_dir):
     return agg, families
 
 
-def generate_tier_robustness(output_dir):
+def generate_tier_robustness(output_dir, *, wandb_run=None):
     """Publication-quality tier-robustness curve (single column).
 
     Analogue of :func:`generate_scaling_curves` with the tier axis instead
     of the size axis: one line per family (base model), markers at each
     available tier, shaded ±σ band across seeds.
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under the media key ``figures/tier/robustness``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -1135,18 +1200,24 @@ def generate_tier_robustness(output_dir):
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
     fig.subplots_adjust(left=0.16, right=0.97, top=0.97, bottom=0.32)
-    fig.savefig(figures_dir / "tier_robustness.pdf")
-    plt.close(fig)
-    print(f"Tier robustness curve saved to {figures_dir}/tier_robustness.pdf")
+    _emit_pdf(
+        fig, figures_dir, "tier_robustness.pdf",
+        wandb_run=wandb_run,
+        wandb_key="figures/tier/robustness",
+        caption="Tier robustness: per-family degradation curves",
+    )
 
 
-def generate_tier_grid(output_dir):
+def generate_tier_grid(output_dir, *, wandb_run=None):
     """2x4 small-multiples tier-robustness curve (double column).
 
     One panel per family, shared axes. Analogue of
     :func:`generate_scaling_grid` but along the tier axis. Highlights
     per-family degradation patterns without the clutter of the combined
     plot in :func:`generate_tier_robustness`.
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under the media key ``figures/tier/robustness_grid``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -1192,18 +1263,24 @@ def generate_tier_grid(output_dir):
     fig.supylabel("Accuracy", fontsize=8, x=0.005)
     fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.10,
                         wspace=0.12, hspace=0.40)
-    fig.savefig(figures_dir / "tier_grid.pdf")
-    plt.close(fig)
-    print(f"Tier grid saved to {figures_dir}/tier_grid.pdf")
+    _emit_pdf(
+        fig, figures_dir, "tier_grid.pdf",
+        wandb_run=wandb_run,
+        wandb_key="figures/tier/robustness_grid",
+        caption="Tier robustness grid: per-family small-multiples",
+    )
 
 
-def generate_tier6_domain_gap(output_dir):
+def generate_tier6_domain_gap(output_dir, *, wandb_run=None):
     """Slope chart showing sim-to-real accuracy drop per family (tier 6).
 
     For each family we draw a sloped line from ``(synthetic, acc_synth)``
     to ``(real, acc_real)``. Steeper = larger domain gap. Colors, markers
     and line styles match the rest of the publication figure set so the
     family identity is consistent across the paper.
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under the media key ``figures/tier/domain_gap_t6``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -1249,13 +1326,20 @@ def generate_tier6_domain_gap(output_dir):
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
     fig.subplots_adjust(left=0.16, right=0.97, top=0.97, bottom=0.32)
-    fig.savefig(figures_dir / "tier6_domain_gap.pdf")
-    plt.close(fig)
-    print(f"Tier 6 domain gap saved to {figures_dir}/tier6_domain_gap.pdf")
+    _emit_pdf(
+        fig, figures_dir, "tier6_domain_gap.pdf",
+        wandb_run=wandb_run,
+        wandb_key="figures/tier/domain_gap_t6",
+        caption="Tier 6 domain gap: synthetic to real slope chart",
+    )
 
 
-def generate_tier_heatmap(output_dir):
-    """Single-column heatmap of accuracy across tiers (base models only)."""
+def generate_tier_heatmap(output_dir, *, wandb_run=None):
+    """Single-column heatmap of accuracy across tiers (base models only).
+
+    When ``wandb_run`` is provided, the figure is also logged to W&B
+    under the media key ``figures/tier/heatmap``.
+    """
     apply_publication_style()
     runs_dir = Path(output_dir) / "runs"
     figures_dir = Path(output_dir) / "figures"
@@ -1297,9 +1381,121 @@ def generate_tier_heatmap(output_dir):
     ax.set_xticklabels([f"T{int(t)}" for t in pivot.columns], rotation=0)
     ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
     fig.subplots_adjust(left=0.32, right=0.94, top=0.96, bottom=0.18)
-    fig.savefig(figures_dir / "tier_heatmap.pdf")
-    plt.close(fig)
-    print(f"Tier heatmap saved to {figures_dir}/tier_heatmap.pdf")
+    _emit_pdf(
+        fig, figures_dir, "tier_heatmap.pdf",
+        wandb_run=wandb_run,
+        wandb_key="figures/tier/heatmap",
+        caption="Tier heatmap: base models x tiers",
+    )
+
+
+# ──────────────────────────────────────────────
+# W&B benchmark-report run
+# ──────────────────────────────────────────────
+def _attach_report_artifacts(run, output_dir, summary_df):
+    """Upload publication PDFs, summary.csv and leaderboard.md to the
+    current W&B run as a single ``benchmark-report`` artifact, and write
+    a few headline metrics to ``run.summary``.
+
+    The artifact preserves the original PDFs for download; the W&B UI
+    already shows the rasterised PNG previews logged via ``_emit_pdf``,
+    but the vector PDFs are what the paper actually includes.
+    """
+    output_dir = Path(output_dir)
+    figures_dir = output_dir / "figures"
+
+    artifact = wandb.Artifact(
+        name="benchmark2-report",
+        type="benchmark-report",
+        description="Publication-quality figures (PDF), summary CSV, leaderboard",
+    )
+    if figures_dir.exists():
+        for pdf_path in sorted(figures_dir.glob("*.pdf")):
+            artifact.add_file(str(pdf_path), name=f"figures/{pdf_path.name}")
+    for extra in ("summary.csv", "leaderboard.md"):
+        p = output_dir / extra
+        if p.exists():
+            artifact.add_file(str(p), name=extra)
+    run.log_artifact(artifact)
+
+    if summary_df is not None and not summary_df.empty:
+        run.summary["num_models"] = int(summary_df["Model"].nunique())
+        run.summary["num_families"] = int(summary_df["Model_Family"].nunique())
+        run.summary["num_tiers"] = int(summary_df["Tier"].nunique())
+        run.summary["num_results"] = int(len(summary_df))
+        t1 = summary_df[summary_df["Tier"] == 1]
+        if not t1.empty:
+            best = t1.sort_values("Acc_Mean", ascending=False).iloc[0]
+            run.summary["best_tier1_model"] = str(best["Model"])
+            run.summary["best_tier1_accuracy"] = float(best["Acc_Mean"])
+
+
+def regenerate_and_publish_figures(args, summary_df=None, *, wandb_publish=True):
+    """Regenerate every publication figure and (optionally) push to W&B.
+
+    Always emits the local PDFs into ``<output_dir>/figures``. When
+    ``wandb_publish`` is True, also opens a dedicated "benchmark report"
+    W&B run, logs each figure as a ``wandb.Image`` under
+    ``figures/<axis>/<name>``, and attaches the original PDFs +
+    ``summary.csv`` + ``leaderboard.md`` as a single ``wandb.Artifact``.
+
+    The report run is intentionally distinct from the per-model training
+    runs (different ``group``, ``job_type``, and ``name`` template) so
+    it's instantly filterable in the W&B UI.
+    """
+    run = None
+    if wandb_publish:
+        run_name = f"benchmark2-report-{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+        dataset_name = Path(args.data_dir).name
+        # ``reinit="finish_previous"`` ensures any lingering per-model
+        # wandb.Run from the post-training path is closed cleanly before
+        # the report run starts. This is the modern (wandb >= 0.20)
+        # spelling of the older ``reinit=True`` flag, which now emits a
+        # deprecation warning but still works.
+        run = wandb.init(
+            project="particle-benchmark",
+            name=run_name,
+            group="benchmark2-report",
+            job_type="benchmark-report",
+            tags=["benchmark2", "report", "publication", dataset_name],
+            mode="offline" if args.wandb_offline else "online",
+            reinit="finish_previous",
+            config={
+                "output_dir": str(args.output_dir),
+                "scaling": bool(args.scaling),
+                "epochs": args.epochs,
+                "seeds": args.seeds,
+                "dataset": dataset_name,
+            },
+        )
+    try:
+        # Diagnostic PNGs — kept W&B-free (they're debug artefacts, not
+        # publication figures) per doc/variant_plotting.md §8.5.
+        generate_plots(args.output_dir)
+
+        # Tier-axis figures (no --scaling dependency)
+        generate_tier_heatmap(args.output_dir, wandb_run=run)
+        generate_tier_robustness(args.output_dir, wandb_run=run)
+        generate_tier_grid(args.output_dir, wandb_run=run)
+        generate_tier6_domain_gap(args.output_dir, wandb_run=run)
+
+        # Variant-axis figures (only meaningful with --scaling)
+        if args.scaling:
+            generate_scaling_curves(args.output_dir, wandb_run=run)
+            generate_scaling_grid(args.output_dir, wandb_run=run)
+            generate_pareto_publication(args.output_dir, wandb_run=run)
+            generate_pareto_publication(
+                args.output_dir,
+                x_col="latency", x_label="Latency (ms)",
+                x_log=True, fname="pareto_latency.pdf",
+                wandb_run=run,
+            )
+
+        if run is not None:
+            _attach_report_artifacts(run, args.output_dir, summary_df)
+    finally:
+        if run is not None:
+            run.finish()
 
 
 # ──────────────────────────────────────────────
@@ -1451,6 +1647,9 @@ def main():
     parser.add_argument("--scaling", action="store_true",
                         help="Run S/M/L variants for scaling curves (with --all: all 24 models; "
                              "with --model: S/M/L of that family)")
+    parser.add_argument("--no-wandb-publish", action="store_true",
+                        help="Skip pushing the publication figures to a W&B "
+                             "'benchmark report' run (still emits PDFs locally).")
 
     args = parser.parse_args()
 
@@ -1494,20 +1693,10 @@ def main():
     if args.aggregate_only:
         summary_df = aggregate_results(args.output_dir)
         if summary_df is not None:
-            generate_plots(args.output_dir)
-            generate_tier_heatmap(args.output_dir)
-            generate_tier_robustness(args.output_dir)
-            generate_tier_grid(args.output_dir)
-            generate_tier6_domain_gap(args.output_dir)
-            if args.scaling:
-                generate_scaling_curves(args.output_dir)
-                generate_scaling_grid(args.output_dir)
-                generate_pareto_publication(args.output_dir)
-                generate_pareto_publication(
-                    args.output_dir,
-                    x_col="latency", x_label="Latency (ms)",
-                    x_log=True, fname="pareto_latency.pdf",
-                )
+            regenerate_and_publish_figures(
+                args, summary_df,
+                wandb_publish=not args.no_wandb_publish,
+            )
             compute_ranking_stability(args.output_dir)
         return
 
@@ -1540,20 +1729,10 @@ def main():
         print("=" * 70)
         summary_df = aggregate_results(args.output_dir)
         if summary_df is not None:
-            generate_plots(args.output_dir)
-            generate_tier_heatmap(args.output_dir)
-            generate_tier_robustness(args.output_dir)
-            generate_tier_grid(args.output_dir)
-            generate_tier6_domain_gap(args.output_dir)
-            if args.scaling:
-                generate_scaling_curves(args.output_dir)
-                generate_scaling_grid(args.output_dir)
-                generate_pareto_publication(args.output_dir)
-                generate_pareto_publication(
-                    args.output_dir,
-                    x_col="latency", x_label="Latency (ms)",
-                    x_log=True, fname="pareto_latency.pdf",
-                )
+            regenerate_and_publish_figures(
+                args, summary_df,
+                wandb_publish=not args.no_wandb_publish,
+            )
             compute_ranking_stability(args.output_dir)
 
     print(f"\nBenchmark complete. {len(all_results)}/{total_runs} runs succeeded.")
