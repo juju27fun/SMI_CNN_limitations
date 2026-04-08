@@ -9,16 +9,19 @@
 
 ## 1 — Motivation
 
-Benchmark 2 evaluates 8 architecture families across up to 7 size variants
-each (51 trained models in total). The first iteration of the plotting
-code reused the generic matplotlib defaults from Benchmark 1 (PNG, tight
-bbox, default Tab10 palette, inline labels). It produced figures that:
+Benchmark 2 evaluates 9 architecture families across up to 7 size variants
+each (58 trained models in total — the 9th family, `Conv1DGAP`, was
+added on 2026-04-08 and shares the Conv1D backbone with a Global
+Average Pooling head in place of the flatten + dense head). The first
+iteration of the plotting code reused the generic matplotlib defaults
+from Benchmark 1 (PNG, tight bbox, default Tab10 palette, inline
+labels). It produced figures that:
 
 1. Did not fit cleanly into a LaTeX two-column layout — `bbox_inches="tight"`
    makes every figure a different size, so `\includegraphics{...}` ends up
    with inconsistent on-page font sizes between figures.
 2. Were unreadable to colorblind reviewers (color was the only visual
-   channel separating 8 families).
+   channel separating 9 families).
 3. Suffered from visual "asymptotes" on the latency scaling curve because
    small variants are kernel-launch-bound (~0.13 ms on the test hardware)
    and several variants land on top of each other with very different
@@ -50,11 +53,21 @@ constants:
 - `COL_W = 3.39` — IEEE/Elsevier single-column width (inches).
 - `DCOL_W = 7.00` — full text width.
 - `FIG_SINGLE_TALL = (3.39, 3.22)` — single-column figure with bottom legend.
-- `FIG_GRID = (7.00, 3.50)` — double-column 2×4 small-multiples.
+- `FIG_GRID_ROW_H = (DCOL_W * 0.50) / 2` — per-row height for the
+  small-multiples grids. The canvas width is fixed to `DCOL_W` (7.00 in)
+  and the grid shape is **near-square**: the
+  `_grid_layout(n_panels)` helper picks
+  `n_cols = ceil(sqrt(n_panels))`,
+  `n_rows = ceil(n_panels / n_cols)`, then returns
+  `(n_rows, n_cols, (DCOL_W, FIG_GRID_ROW_H * n_rows))`. A 9-family
+  run therefore renders as **3 × 3** (9 cells exactly filled,
+  7.00 × 5.25 in canvas), a 4-family run as 2 × 2, a 10-family run
+  as 4 × 3, and so on — so a new family automatically picks up the
+  tightest square layout instead of leaving a half-empty row.
 - `PUB_RC` — matplotlib rcParams (font size 8, serif, `savefig.bbox="standard"`).
 - `FAMILY_COLORS`, `FAMILY_MARKERS`, `FAMILY_LINESTYLES` — three fully
-  independent per-family encoding dicts (Okabe–Ito palette, 8 unique
-  marker shapes, 8 unique linestyles).
+  independent per-family encoding dicts (Okabe–Ito + Brewer Dark2
+  palettes, 9 unique marker shapes, 9 unique linestyles).
 
 `savefig.bbox="standard"` is critical: it preserves the canvas, in
 contrast to `"tight"` which crops it to whatever the current artist
@@ -74,8 +87,8 @@ log-error latency renderer).
 | File                     | Function                           | Format           | Purpose |
 |--------------------------|------------------------------------|------------------|---------|
 | `scaling_macs.pdf`       | `generate_scaling_curves`          | single column    | Per-family upper envelope of accuracy vs MACs (log x). The "scaling law" view. |
-| `scaling_grid.pdf`       | `generate_scaling_grid`            | double column    | 2×4 small-multiples — one panel per family, shared axes, for quick visual comparison of scaling shapes (compute view). |
-| `scaling_grid_size.pdf`  | `generate_scaling_grid`            | double column    | Same 2×4 small-multiples layout but with on-disk model size (MB) on the x-axis — storage view, complementary to the MACs view. |
+| `scaling_grid.pdf`       | `generate_scaling_grid`            | double column    | Near-square small-multiples grid (3 × 3 for the 9-family zoo) — one panel per family, shared axes, for quick visual comparison of scaling shapes (compute view). |
+| `scaling_grid_size.pdf`  | `generate_scaling_grid`            | double column    | Same near-square small-multiples grid as `scaling_grid.pdf` but with on-disk model size (MB) on the x-axis — storage view, complementary to the MACs view. |
 | `pareto.pdf`             | `generate_pareto_publication`      | single column    | Accuracy vs MACs scatter + global Pareto front. Numbered badges + boxed key list every front member. |
 | `pareto_size.pdf`        | `generate_pareto_publication`      | single column    | Same layout as `pareto.pdf` but with on-disk size (MB, log x) — storage / BRAM-footprint view. |
 | `pareto_latency.pdf`     | `generate_pareto_latency_focus`    | single column    | **Specialised** log-error / log-latency renderer — clipped y-window, kernel-launch floor shading, numbered Pareto badges + side-key table, iso-accuracy guides. The deployment-decision figure. |
@@ -103,11 +116,16 @@ is always interpretable as "best you can do at ≤ this budget".
 
 ### 3.2 — `scaling_grid.pdf` — Small multiples
 
-Tufte-style 2×4 grid of single-family scaling curves with shared x and
-y axes. Each panel shows one architecture family across all its
-variants. This is the "is the family well-behaved?" view — a curve that
-plateaus, dips, or spikes is immediately visible because every panel
-has the same scale.
+Tufte-style small-multiples grid of single-family scaling curves with
+shared x and y axes. The grid is **dynamic and near-square**:
+`n_cols = ceil(sqrt(n_families))` and
+`n_rows = ceil(n_families / n_cols)`, so the current 9-family zoo
+renders as a clean **3 × 3 grid** (9 cells exactly filled) and any
+additional family automatically gets its own panel via the tightest
+square layout. Each panel shows one architecture family across all
+its variants. This is the "is the family well-behaved?" view — a
+curve that plateaus, dips, or spikes is immediately visible because
+every panel has the same scale.
 
 Points inside each panel are sorted by **MACs** (the x-axis), not by
 size-tag ordinal. Sorting by size tag would be wrong because size order
@@ -188,17 +206,19 @@ displayed y-range.
 Every figure uses **three fully independent visual channels** so any
 single channel can identify a family on its own:
 
-1. **Color** — Okabe–Ito 8-color palette (CVD-safe under deuteranopia,
-   protanopia, and tritanopia).
-2. **Marker shape** — circle, square, triangle, diamond, etc. (8 distinct
-   shapes for 8 families).
-3. **Linestyle** — 8 distinct patterns: the four standard matplotlib
+1. **Color** — Okabe–Ito 8-color palette extended with one Brewer Dark2
+   entry for the 9th family (`Conv1DGAP` → `#E6AB02`). All 9 hues
+   remain CVD-safe under deuteranopia, protanopia, and tritanopia.
+2. **Marker shape** — circle, square, triangle, diamond, hexagon
+   (`h` for Conv1DGAP), etc. (9 distinct shapes for 9 families).
+3. **Linestyle** — 9 distinct patterns: the four standard matplotlib
    strings (`-`, `--`, `-.`, `:`) for Conv1D/DenseNet1D/EfficientNet1D/
-   InceptionTime1D, plus four custom `(offset, on_off_seq)` tuples for
+   InceptionTime1D, plus five custom `(offset, on_off_seq)` tuples for
    LeNet1D (dash-dot-dot), MobileNet1D (dense long-dash), ResNet1D
-   (dot-dot-dash), and VGG1D (dash-dot-dot-dot). Each pattern was chosen
-   to stay visually distinct at the 1.2 pt publication linewidth defined
-   in `PUB_RC`.
+   (dot-dot-dash), VGG1D (dash-dot-dot-dot), and Conv1DGAP
+   (`(0, (5, 1, 1, 1, 1, 1, 1, 1))` — long dash followed by three dots).
+   Each pattern was chosen to stay visually distinct at the 1.2 pt
+   publication linewidth defined in `PUB_RC`.
 
 This redundancy means the figures stay readable when:
 
@@ -403,7 +423,8 @@ checklist so it slots cleanly into the existing system.
 ## 9 — File and code references
 
 - `benchmark_zoo.py:96-135` — `FAMILY_COLORS`, `FAMILY_MARKERS`,
-  `FAMILY_LINESTYLES` (all three dicts have 8 unique entries).
+  `FAMILY_LINESTYLES` (all three dicts have 9 unique entries, one per
+  family including `Conv1DGAP`).
 - `benchmark_zoo.py:142-171` — figure size constants and `PUB_RC`.
 - `benchmark_zoo.py:174-179` — `apply_publication_style()`.
 - `benchmark_zoo.py:182-216` — `_emit_pdf` helper (saves PDF, closes

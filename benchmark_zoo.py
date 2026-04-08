@@ -96,6 +96,7 @@ TIER5_MASK_RATIO = 0.15
 # tritanopia simulations.
 FAMILY_COLORS = {
     "Conv1D":          "#0072B2",  # blue
+    "Conv1DGAP":       "#E6AB02",  # Brewer Dark2 dark yellow (CVD-safe)
     "DenseNet1D":      "#999999",  # medium grey
     "EfficientNet1D":  "#009E73",  # bluish green
     "InceptionTime1D": "#CC79A7",  # reddish purple
@@ -110,6 +111,7 @@ FAMILY_COLORS = {
 # color-vision-deficient readers.
 FAMILY_MARKERS = {
     "Conv1D":          "o",  # circle
+    "Conv1DGAP":       "h",  # hexagon
     "DenseNet1D":      "s",  # square
     "EfficientNet1D":  "^",  # triangle up
     "InceptionTime1D": "D",  # diamond
@@ -126,6 +128,7 @@ FAMILY_MARKERS = {
 # publication linewidth defined in ``PUB_RC``.
 FAMILY_LINESTYLES = {
     "Conv1D":          "-",                              # solid
+    "Conv1DGAP":       (0, (5, 1, 1, 1, 1, 1, 1, 1)),    # long-dash-triple-dot
     "DenseNet1D":      "--",                             # dashed
     "EfficientNet1D":  "-.",                             # dash-dot
     "InceptionTime1D": ":",                              # dotted
@@ -147,7 +150,46 @@ GOLD = 1.61803
 FIG_SINGLE = (COL_W, COL_W / GOLD)            # 3.39 x 2.10  — compact single column
 FIG_SINGLE_TALL = (COL_W, COL_W * 0.95)       # 3.39 x 3.22  — single column with bottom legend
 FIG_DOUBLE = (DCOL_W, DCOL_W / (GOLD * 1.6))  # 7.00 x 2.70  — wide, short
-FIG_GRID = (DCOL_W, DCOL_W * 0.50)            # 7.00 x 3.50  — 2x4 small-multiples
+FIG_GRID_ROW_H = (DCOL_W * 0.50) / 2          # per-row height of the small-multiples grid
+
+
+def _family_legend_handles(families):
+    """Return matplotlib ``Line2D`` handles (one per family) for a shared legend.
+
+    Each handle carries the same (color, marker, linestyle) triple used by
+    the grid panels so the legend is a faithful key for every curve drawn
+    in the small-multiples figure.
+    """
+    from matplotlib.lines import Line2D
+    handles = []
+    for family in families:
+        color = FAMILY_COLORS.get(family, "#333333")
+        marker = FAMILY_MARKERS.get(family, "o")
+        ls = FAMILY_LINESTYLES.get(family, "-")
+        handles.append(Line2D(
+            [0], [0], color=color, marker=marker, linestyle=ls,
+            linewidth=1.0, markersize=4.0,
+            markeredgecolor="white", markeredgewidth=0.3,
+            label=family,
+        ))
+    return handles
+
+
+def _grid_layout(n_panels: int, n_cols: int | None = None) -> tuple[int, int, tuple[float, float]]:
+    """Return ``(n_rows, n_cols, figsize)`` for a small-multiples grid.
+
+    The layout is a (near-)square: ``n_cols = ceil(sqrt(n_panels))`` and
+    ``n_rows = ceil(n_panels / n_cols)``, so a 9-family run renders as
+    a 3x3 grid, a 4-family run as 2x2, and a 10-family run as 4x3.
+    ``n_cols`` can be overridden explicitly if a figure needs a specific
+    aspect (e.g. to match a sibling figure). The figure width stays at
+    ``DCOL_W`` and the row height scales linearly so each sub-axes keeps
+    roughly the same on-page footprint regardless of the grid shape.
+    """
+    if n_cols is None:
+        n_cols = max(1, math.ceil(math.sqrt(n_panels)))
+    n_rows = max(1, (n_panels + n_cols - 1) // n_cols)
+    return n_rows, n_cols, (DCOL_W, FIG_GRID_ROW_H * n_rows)
 
 PUB_RC = {
     "figure.dpi": 150, "savefig.dpi": 300,
@@ -947,14 +989,21 @@ def generate_scaling_grid(output_dir, x_col="macs", x_label="MACs",
         print(f"No data for scaling grid with x_col={x_col!r}.")
         return
 
-    # Pad to 8 panels (2x4)
-    n_panels = 8
+    # Grid sized to the current family count — near-square layout via
+    # `_grid_layout`, so the 9-family zoo renders as 3x3. Add an extra
+    # slice of canvas height for the shared family legend drawn under
+    # the grid.
+    n_rows, n_cols, (fig_w, fig_h) = _grid_layout(len(families))
+    legend_h = 0.55  # inches reserved for the shared bottom legend
+    figsize = (fig_w, fig_h + legend_h)
+    n_panels = n_rows * n_cols
     ymin = max(0.78, float(agg["acc_mean"].min()) - 0.02)
     ymax = min(1.005, float(agg["acc_mean"].max()) + 0.015)
     xmin = max(1e-3, float(agg[x_col].min()) * 0.5)
     xmax = float(agg[x_col].max()) * 2.0
 
-    fig, axes = plt.subplots(2, 4, figsize=FIG_GRID, sharex=True, sharey=True)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize,
+                             sharex=True, sharey=True, squeeze=False)
     for ax, family in zip(axes.flat, families):
         # Sort by the x-axis quantity so the connecting line is monotone
         # in x. Size-tag ordinal sorting would be wrong here because size
@@ -983,14 +1032,25 @@ def generate_scaling_grid(output_dir, x_col="macs", x_label="MACs",
         ax.grid(True, alpha=0.3, linewidth=0.3)
         ax.tick_params(labelsize=6)
 
-    # Hide unused axes if fewer than 8 families
+    # Hide unused axes if the family count does not fill the grid.
     for ax in axes.flat[len(families):n_panels]:
         ax.set_visible(False)
 
-    fig.supxlabel(x_label, fontsize=8, y=0.02)
+    # Reserve the lower `legend_frac` of the figure for the shared legend,
+    # then pack the subplot grid into the remaining upper band. This keeps
+    # the subplot tile size independent of the added legend strip.
+    legend_frac = legend_h / figsize[1]
+    fig.supxlabel(x_label, fontsize=8, y=legend_frac + 0.02)
     fig.supylabel("Accuracy", fontsize=8, x=0.005)
-    fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.10,
+    fig.subplots_adjust(left=0.06, right=0.99,
+                        top=1.0 - (0.06 * fig_h / figsize[1]),
+                        bottom=legend_frac + 0.08,
                         wspace=0.12, hspace=0.40)
+    fig.legend(handles=_family_legend_handles(families),
+               loc="lower center", bbox_to_anchor=(0.5, 0.005),
+               ncol=min(len(families), 5), columnspacing=1.2,
+               handletextpad=0.4, handlelength=2.2,
+               frameon=False, fontsize=7)
     # Dispatch the W&B media key on fname so the MACs grid and the
     # size grid land under separate panels in the report run.
     if "size" in fname:
@@ -1453,11 +1513,15 @@ def generate_tier_grid(output_dir, *, wandb_run=None):
     if len(tiers) < 2:
         return
 
-    n_panels = 8
+    n_rows, n_cols, (fig_w, fig_h) = _grid_layout(len(families))
+    legend_h = 0.55  # inches reserved for the shared bottom legend
+    figsize = (fig_w, fig_h + legend_h)
+    n_panels = n_rows * n_cols
     ymin = max(0.0, float(agg["acc_mean"].min()) - 0.05)
     ymax = min(1.005, float(agg["acc_mean"].max()) + 0.03)
 
-    fig, axes = plt.subplots(2, 4, figsize=FIG_GRID, sharex=True, sharey=True)
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize,
+                             sharex=True, sharey=True, squeeze=False)
     for ax, family in zip(axes.flat, families):
         fam = agg[agg["family"] == family].sort_values("tier")
         color = FAMILY_COLORS.get(family, "#333333")
@@ -1482,10 +1546,18 @@ def generate_tier_grid(output_dir, *, wandb_run=None):
     for ax in axes.flat[len(families):n_panels]:
         ax.set_visible(False)
 
-    fig.supxlabel("Difficulty tier", fontsize=8, y=0.02)
+    legend_frac = legend_h / figsize[1]
+    fig.supxlabel("Difficulty tier", fontsize=8, y=legend_frac + 0.02)
     fig.supylabel("Accuracy", fontsize=8, x=0.005)
-    fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.10,
+    fig.subplots_adjust(left=0.06, right=0.99,
+                        top=1.0 - (0.06 * fig_h / figsize[1]),
+                        bottom=legend_frac + 0.08,
                         wspace=0.12, hspace=0.40)
+    fig.legend(handles=_family_legend_handles(families),
+               loc="lower center", bbox_to_anchor=(0.5, 0.005),
+               ncol=min(len(families), 5), columnspacing=1.2,
+               handletextpad=0.4, handlelength=2.2,
+               frameon=False, fontsize=7)
     _emit_pdf(
         fig, figures_dir, "tier_grid.pdf",
         wandb_run=wandb_run,

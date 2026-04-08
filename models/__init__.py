@@ -9,6 +9,7 @@ hook-based feature extraction in the training pipeline.
 """
 
 from models.conv1d import Conv1DClassifier
+from models.conv1d_gap import Conv1DGAPClassifier
 from models.lenet1d import LeNet1D
 from models.vgg1d import VGG1D
 from models.resnet1d import ResNet1D
@@ -19,6 +20,7 @@ from models.densenet1d import DenseNet1D
 
 MODEL_REGISTRY = {
     "Conv1D": Conv1DClassifier,
+    "Conv1DGAP": Conv1DGAPClassifier,
     "LeNet1D": LeNet1D,
     "VGG1D": VGG1D,
     "ResNet1D": ResNet1D,
@@ -41,6 +43,16 @@ MODEL_VARIANTS = {
     "Conv1D-S":          (Conv1DClassifier, {"width_mult": 0.5}),
     "Conv1D":            (Conv1DClassifier, {}),
     "Conv1D-L":          (Conv1DClassifier, {"width_mult": 2.0}),
+    # Conv1DGAP family (width_mult: default=1.0) — same backbone as Conv1D
+    # but with Global Average Pooling instead of flatten, yielding a much
+    # smaller FC head.
+    "Conv1DGAP-Pico":    (Conv1DGAPClassifier, {"width_mult": 0.0125}),
+    "Conv1DGAP-Nano":    (Conv1DGAPClassifier, {"width_mult": 0.025}),
+    "Conv1DGAP-XXS":     (Conv1DGAPClassifier, {"width_mult": 0.1}),
+    "Conv1DGAP-XS":      (Conv1DGAPClassifier, {"width_mult": 0.25}),
+    "Conv1DGAP-S":       (Conv1DGAPClassifier, {"width_mult": 0.5}),
+    "Conv1DGAP":         (Conv1DGAPClassifier, {}),
+    "Conv1DGAP-L":       (Conv1DGAPClassifier, {"width_mult": 2.0}),
     # LeNet1D family (width_mult: default=1.0)
     "LeNet1D-Pico":      (LeNet1D, {"width_mult": 0.01}),
     "LeNet1D-Nano":      (LeNet1D, {"width_mult": 0.025}),

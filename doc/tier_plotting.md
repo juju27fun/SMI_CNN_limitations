@@ -59,19 +59,25 @@ Concretely, the tier figures import the same module-level constants
 from `benchmark_zoo.py`:
 
 - `FIG_SINGLE_TALL = (3.39, 3.22)` — `tier_robustness.pdf` and `tier6_domain_gap.pdf`.
-- `FIG_GRID = (7.00, 3.50)` — `tier_grid.pdf`.
+- `FIG_GRID_ROW_H` + `_grid_layout(n_panels)` — `tier_grid.pdf`
+  canvas is computed on the fly as a near-square grid
+  (`n_cols = ceil(sqrt(n_panels))`), so the 9-family zoo fits exactly
+  in a **3 × 3** layout.
 - `FIG_SINGLE` — `tier_heatmap.pdf`.
 - `FAMILY_COLORS`, `FAMILY_MARKERS`, `FAMILY_LINESTYLES` — identical family
-  encoding to the variant figures, with 8 unique colors, 8 unique marker
-  shapes and 8 unique linestyles, so the same line style means the same
+  encoding to the variant figures, with 9 unique colors, 9 unique marker
+  shapes and 9 unique linestyles, so the same line style means the same
   family across the whole paper.
 
 Canvas verification: `tier_robustness.pdf` and `tier6_domain_gap.pdf`
 both render at `244.08 × 231.876 pts` — bit-for-bit identical to
-`scaling_macs.pdf`. `tier_grid.pdf` is `504 × 252 pts` — bit-for-bit
-identical to `scaling_grid.pdf`. This is the key property that lets a
-LaTeX paper place a variant figure and a tier figure side by side
-without any font-size drift.
+`scaling_macs.pdf`. `tier_grid.pdf` is bit-for-bit identical to
+`scaling_grid.pdf` at the same family count (currently
+504 × 378 pts = 7.00 × 5.25 in for the 9-family 3 × 3 layout),
+because both use the same `_grid_layout()` helper (same `DCOL_W`
+width, same `ceil(sqrt(n))` column count, same per-row height).
+This is the key property that lets a LaTeX paper place a variant
+figure and a tier figure side by side without any font-size drift.
 
 ---
 
@@ -87,7 +93,7 @@ and `generate_tier6_domain_gap`. They are wired unconditionally in
 |-------------------------|----------------------------------|-----------------|---------|
 | `tier_heatmap.pdf`      | `generate_tier_heatmap`          | single column   | Compact overview: base models × tiers, colored by accuracy. The "at-a-glance" leaderboard. |
 | `tier_robustness.pdf`   | `generate_tier_robustness`       | single column   | Per-family degradation curve — one line per family, tier on x, accuracy on y, ±σ band across seeds. The "which family ages best" view. |
-| `tier_grid.pdf`         | `generate_tier_grid`             | double column   | 2×4 small-multiples — one panel per family, shared axes. The "does each family degrade smoothly" view. |
+| `tier_grid.pdf`         | `generate_tier_grid`             | double column   | Near-square small-multiples grid (3 × 3 for the 9-family zoo) — one panel per family, shared axes. The "does each family degrade smoothly" view. |
 | `tier6_domain_gap.pdf`  | `generate_tier6_domain_gap`      | single column   | Slope chart: `synthetic → real` accuracy drop per family on tier 6. The "how painful is sim-to-real" view. |
 
 ### 3.1 — `tier_heatmap.pdf` — Base models × tiers
@@ -125,12 +131,17 @@ numeric drop in accuracy. Tier names are only used as labels:
 
 ### 3.3 — `tier_grid.pdf` — Small multiples
 
-Tufte-style 2×4 grid of single-family tier-robustness curves with
-shared x and y axes. Same idea as `scaling_grid.pdf`: the combined
-plot (`tier_robustness.pdf`) answers *"which family wins"*, the grid
-answers *"does each family behave sensibly"*. A non-monotone curve in
-a panel immediately flags a training pathology (e.g., the tier-5 run
-crashed for this family and we're seeing a random-init score).
+Tufte-style small-multiples grid of single-family tier-robustness
+curves with shared x and y axes. The layout is computed dynamically
+via `_grid_layout(len(families))` as a near-square grid
+(`n_cols = ceil(sqrt(n_families))`) — currently **3 × 3** for the
+9-family zoo — so adding a family never silently clips a panel and
+the layout always collapses to the tightest square shape. Same idea
+as `scaling_grid.pdf`: the combined plot (`tier_robustness.pdf`)
+answers *"which family wins"*, the grid answers *"does each family
+behave sensibly"*. A non-monotone curve in a panel immediately flags
+a training pathology (e.g., the tier-5 run crashed for this family
+and we're seeing a random-init score).
 
 ### 3.4 — `tier6_domain_gap.pdf` — Sim-to-real slope chart
 
@@ -160,10 +171,12 @@ Identical to the variant figures. See
 justification. Every tier figure uses all three channels
 simultaneously, and each channel is fully independent:
 
-1. **Color** — Okabe–Ito 8-color palette (CVD-safe).
-2. **Marker shape** — 8 distinct shapes, one per family.
-3. **Linestyle** — 8 distinct patterns (the four standard matplotlib
-   strings plus four custom `(offset, on_off_seq)` tuples). Linestyle
+1. **Color** — Okabe–Ito 8-color palette + one Brewer Dark2 entry for
+   the 9th family (`Conv1DGAP` → `#E6AB02`). All 9 hues remain
+   CVD-safe.
+2. **Marker shape** — 9 distinct shapes, one per family.
+3. **Linestyle** — 9 distinct patterns (the four standard matplotlib
+   strings plus five custom `(offset, on_off_seq)` tuples). Linestyle
    alone is enough to identify a family, which was not the case in the
    initial implementation.
 
@@ -334,7 +347,7 @@ this checklist so it slots cleanly into the existing system.
 
 - `benchmark_zoo.py:96-135` — `FAMILY_COLORS`, `FAMILY_MARKERS`,
   `FAMILY_LINESTYLES` (shared with variant figures; all three dicts
-  have 8 unique entries).
+  have 9 unique entries, one per family including `Conv1DGAP`).
 - `benchmark_zoo.py:142-171` — figure size constants and `PUB_RC`.
 - `benchmark_zoo.py:174-179` — `apply_publication_style()`.
 - `benchmark_zoo.py:182-216` — `_emit_pdf` helper (saves PDF, closes
