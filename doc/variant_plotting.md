@@ -66,15 +66,19 @@ different on-page size in LaTeX.
 ## 3 — Figure inventory
 
 All figures are emitted to `results/<run>/figures/` by
-`generate_scaling_curves`, `generate_scaling_grid`, and
-`generate_pareto_publication` (called twice).
+`generate_scaling_curves`, `generate_scaling_grid` (called twice —
+compute + storage view), `generate_pareto_publication` (called twice —
+MACs + size view), and `generate_pareto_latency_focus` (the dedicated
+log-error latency renderer).
 
-| File                   | Function                          | Format           | Purpose |
-|------------------------|-----------------------------------|------------------|---------|
-| `scaling_macs.pdf`     | `generate_scaling_curves`         | single column    | Per-family upper envelope of accuracy vs MACs (log x). The "scaling law" view. |
-| `scaling_grid.pdf`     | `generate_scaling_grid`           | double column    | 2×4 small-multiples — one panel per family, shared axes, for quick visual comparison of scaling shapes. |
-| `pareto.pdf`           | `generate_pareto_publication`     | single column    | Accuracy vs MACs scatter + global Pareto front. Numbered badges + boxed key list every front member. |
-| `pareto_latency.pdf`   | `generate_pareto_publication`     | single column    | Same layout as `pareto.pdf` but with Latency (log ms) on the x-axis. |
+| File                     | Function                           | Format           | Purpose |
+|--------------------------|------------------------------------|------------------|---------|
+| `scaling_macs.pdf`       | `generate_scaling_curves`          | single column    | Per-family upper envelope of accuracy vs MACs (log x). The "scaling law" view. |
+| `scaling_grid.pdf`       | `generate_scaling_grid`            | double column    | 2×4 small-multiples — one panel per family, shared axes, for quick visual comparison of scaling shapes (compute view). |
+| `scaling_grid_size.pdf`  | `generate_scaling_grid`            | double column    | Same 2×4 small-multiples layout but with on-disk model size (MB) on the x-axis — storage view, complementary to the MACs view. |
+| `pareto.pdf`             | `generate_pareto_publication`      | single column    | Accuracy vs MACs scatter + global Pareto front. Numbered badges + boxed key list every front member. |
+| `pareto_size.pdf`        | `generate_pareto_publication`      | single column    | Same layout as `pareto.pdf` but with on-disk size (MB, log x) — storage / BRAM-footprint view. |
+| `pareto_latency.pdf`     | `generate_pareto_latency_focus`    | single column    | **Specialised** log-error / log-latency renderer — clipped y-window, kernel-launch floor shading, numbered Pareto badges + side-key table, iso-accuracy guides. The deployment-decision figure. |
 
 Note that `scaling_latency.pdf` was **deliberately removed** — see §6.
 
@@ -118,7 +122,7 @@ Used as a complement to `scaling_macs.pdf`, not a replacement.
 The combined plot answers "which family scales best?", the grid
 answers "does each family scale at all?".
 
-### 3.3 — `pareto.pdf` and `pareto_latency.pdf`
+### 3.3 — `pareto.pdf` and `pareto_size.pdf`
 
 Single-column scatter of every variant in *(x, accuracy)* space, with
 the *global* Pareto front computed across all families and overlaid as
@@ -132,11 +136,50 @@ without cluttering the data area. Earlier versions placed the model
 name next to each circled point, which produced overlapping text on
 crowded fronts.
 
-`pareto.pdf` uses MACs (log x) and `pareto_latency.pdf` uses Latency
-in milliseconds (log x). They share the function
+`pareto.pdf` uses MACs (log x) and `pareto_size.pdf` uses on-disk
+size in MB (log x). They share the function
 `generate_pareto_publication(output_dir, x_col, x_label, x_log, fname)`,
-which is called twice from the wiring at `benchmark_zoo.py:1528` and
-`benchmark_zoo.py:1574`.
+which is called twice from the wiring in
+`regenerate_and_publish_figures` (`benchmark_zoo.py`).
+
+### 3.4 — `pareto_latency.pdf` — specialised log-error view
+
+The latency view uses its own renderer (`generate_pareto_latency_focus`)
+rather than the generic `generate_pareto_publication`. A boss-facing
+design iteration revealed that the generic layout wasted the canvas:
+every competitive variant sits in [0.94, 0.99] accuracy, and a linear
+y-axis compresses the most interesting differences (1.7 % vs 2.7 %
+vs 4.0 % error) into ~5 % of the plot height. Five changes together
+make the latency figure actually readable:
+
+1. **Log error rate, not linear accuracy.** Plotting `1 − acc` on a
+   log y-axis spreads the 94 %–99 % band across half the canvas.
+2. **Clipped y-window at err = 0.15.** Pico outliers at 40–50 % error
+   would otherwise crush the interesting band into a thin strip. Any
+   point outside the window gets an explicit upward arrow + italic
+   name label at the top edge so the clipping is transparent.
+3. **Kernel-launch floor shading.** The RTX A1000's per-call CUDA
+   overhead (~0.13 ms) creates a vertical clump of small variants at
+   the leftmost x-edge that share latency but not accuracy. A shaded
+   band + "kernel-launch floor" italic label makes the hardware
+   artefact explicit.
+4. **Numbered Pareto badges + lower-right side-key table.** Three of
+   the six Pareto points sit inside the kernel-launch clump and would
+   overlap with inline labels. Gold-star markers carry bold numeric
+   badges (1–6) that map onto a monospace table in the lower-right
+   listing `(model, latency, accuracy)` — a self-contained
+   deployment cheat-sheet.
+5. **Iso-accuracy guides.** Horizontal dotted lines at acc =
+   {0.90, 0.95, 0.97, 0.98, 0.99} with right-edge labels let the
+   reader translate any error reading back into a familiar accuracy
+   reading without a twin axis.
+
+The custom y-tick locator (subs = `(1, 2, 3, 5) × 10^k`) labels the
+left axis at 0.02 / 0.03 / 0.05 / 0.1 rather than only at the
+decade, which matches the density of the data. The Pareto front is
+computed on the **full** dataset (not just the clipped window) so
+the dashed line stays truthful when some variants lie outside the
+displayed y-range.
 
 ---
 
@@ -200,10 +243,38 @@ Each figure answers a specific question. Read them in this order.
 
 ### 5.4 — `pareto_latency.pdf` — *"Which model should I pick at a given latency budget?"*
 - **X-axis**: Latency in milliseconds (log).
+- **Y-axis**: Error rate `1 − acc` on a log scale, clipped at
+  err = 0.15 (acc = 0.85). The right edge carries iso-accuracy
+  reference labels {0.90, 0.95, 0.97, 0.98} so the reader can read
+  either error or accuracy from the same dotted lines.
+- **Grey band on the left**: the kernel-launch floor (~0.13 ms on
+  RTX A1000). Any variant inside the band is bottlenecked by CUDA
+  launch overhead, not by its own arithmetic — the vertical clump
+  there is an expected hardware artefact, not a modelling result.
+- **Upward arrows at the top edge**: points that fell outside the
+  clipped y-window (typically `LeNet1D-Pico`). The italic name next
+  to the arrow identifies the variant.
+- **Gold stars + bold numeric badges**: global Pareto-optimal points
+  across all families, computed on the full dataset. The dashed
+  black line connects them in latency order.
+- **Lower-right side-key table**: maps each badge to its model name,
+  exact median latency, and exact mean accuracy — the figure is
+  fully self-contained, no cross-reference to the leaderboard
+  required.
+- **What to look for**: scan upward from your latency budget along a
+  vertical line, find the first Pareto star above it, and read its
+  number off the side-key. That is the lowest-error model that
+  meets your latency constraint on the target hardware. This is the
+  figure that drives the FPGA deployment decision.
+
+### 5.5 — `pareto_size.pdf` — *"Which model should I pick at a given storage budget?"*
+- **X-axis**: on-disk model size in MB (log).
 - Otherwise identical to `pareto.pdf`.
-- **What to look for**: same as above but in deployment-relevant units.
-  This is the figure that drives the FPGA deployment decision because
-  latency, not MACs, is what the application sees.
+- **What to look for**: the binding constraint when the deployment
+  target is an embedded board whose flash / BRAM / weight-tile
+  cache cannot hold the full model. Comparing the MACs / latency /
+  size fronts side-by-side is the canonical "universally efficient
+  vs axis-specific" diagnostic.
 
 ---
 
@@ -237,17 +308,25 @@ stacked dots, with only the topmost landing on the front.
 
 The Pareto plot subsumes the scaling-curve information for latency
 without the readability problem, so `scaling_latency.pdf` was dropped
-in favor of `pareto_latency.pdf`. The wiring change is:
+in favour of `pareto_latency.pdf`. The latency Pareto later grew its
+own specialised renderer (§3.4) because the generic layout still
+wasted the canvas on the linear-accuracy view. The current wiring is:
 
 ```python
-# benchmark_zoo.py:1526 and :1572
+# benchmark_zoo.py — regenerate_and_publish_figures
 generate_scaling_curves(args.output_dir)            # only emits scaling_macs.pdf now
-generate_scaling_grid(args.output_dir)
+generate_scaling_grid(args.output_dir)              # compute view (MACs)
+generate_scaling_grid(                              # storage view (MB)
+    args.output_dir,
+    x_col="size_mb", x_label="Model size (MB)",
+    fname="scaling_grid_size.pdf",
+)
 generate_pareto_publication(args.output_dir)        # MACs (default)
+generate_pareto_latency_focus(args.output_dir)      # specialised log-error
 generate_pareto_publication(
     args.output_dir,
-    x_col="latency", x_label="Latency (ms)",
-    x_log=True, fname="pareto_latency.pdf",
+    x_col="size_mb", x_label="Model size (MB)",
+    x_log=True, fname="pareto_size.pdf",
 )
 ```
 
@@ -334,7 +413,13 @@ checklist so it slots cleanly into the existing system.
 - `benchmark_zoo.py:913-980` — `generate_scaling_grid` (sorted by
   `macs`, not by size-tag ordinal).
 - `benchmark_zoo.py:982-1091` — `generate_pareto_publication`
-  (parameterised on `x_col`, `x_label`, `x_log`, `fname`).
+  (parameterised on `x_col`, `x_label`, `x_log`, `fname`; handles
+  the MACs and on-disk-size fronts, dispatches the W&B key on
+  `fname`).
+- `benchmark_zoo.py:1124-1313` — `KERNEL_LAUNCH_FLOOR_MS` module
+  constant (0.14 ms on RTX A1000) plus `generate_pareto_latency_focus`,
+  the dedicated log-error renderer for `pareto_latency.pdf` (see
+  §3.4 for the rationale).
 - `benchmark_zoo.py:1395-1434` — `_attach_report_artifacts` (uploads
   PDFs + `summary.csv` + `leaderboard.md` as a single `wandb.Artifact`
   and writes headline metrics to `run.summary`).
@@ -384,16 +469,21 @@ you filter the W&B UI to either view.
 The variant figures share a single `figures/variant/*` namespace, so
 they land together in the W&B media panel:
 
-| Function                      | Local file            | W&B key                          |
-|-------------------------------|-----------------------|----------------------------------|
-| `generate_scaling_curves`     | `scaling_macs.pdf`    | `figures/variant/scaling_macs`   |
-| `generate_scaling_grid`       | `scaling_grid.pdf`    | `figures/variant/scaling_grid`   |
-| `generate_pareto_publication` | `pareto.pdf`          | `figures/variant/pareto_macs`    |
-| `generate_pareto_publication` | `pareto_latency.pdf`  | `figures/variant/pareto_latency` |
+| Function                         | Local file                | W&B key                              |
+|----------------------------------|---------------------------|--------------------------------------|
+| `generate_scaling_curves`        | `scaling_macs.pdf`        | `figures/variant/scaling_macs`       |
+| `generate_scaling_grid`          | `scaling_grid.pdf`        | `figures/variant/scaling_grid`       |
+| `generate_scaling_grid`          | `scaling_grid_size.pdf`   | `figures/variant/scaling_grid_size`  |
+| `generate_pareto_publication`    | `pareto.pdf`              | `figures/variant/pareto_macs`        |
+| `generate_pareto_publication`    | `pareto_size.pdf`         | `figures/variant/pareto_size`        |
+| `generate_pareto_latency_focus`  | `pareto_latency.pdf`      | `figures/variant/pareto_latency`     |
 
-The `pareto` key is dispatched on `fname` inside the function (see
-`benchmark_zoo.py:1078-1087`), so the two invocations land on two
-distinct panels rather than overwriting each other.
+`generate_pareto_publication` dispatches its W&B key on `fname`
+(`"size"` → `pareto_size`, else `pareto_macs`) so the two invocations
+land on two distinct panels rather than overwriting each other.
+`generate_scaling_grid` uses the same `fname`-based dispatch pattern
+(`"size"` → `scaling_grid_size`, else `scaling_grid`). The latency
+front has its own dedicated function and media key.
 
 ### 10.3 — The `benchmark2-report` artifact
 
