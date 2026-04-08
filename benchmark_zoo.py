@@ -41,6 +41,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -794,6 +795,7 @@ def _load_tier1_aggregated(output_dir):
     agg = t1.groupby("model_name").agg(
         macs=("macs", "first"),
         latency=("latency_median_ms", "mean"),
+        size_mb=("size_mb", "first"),
         acc_mean=("accuracy", "mean"),
         acc_std=("accuracy", "std"),
         family=("model_family", "first"),
@@ -910,14 +912,27 @@ def generate_scaling_curves(output_dir, *, wandb_run=None):
         )
 
 
-def generate_scaling_grid(output_dir, *, wandb_run=None):
+def generate_scaling_grid(output_dir, x_col="macs", x_label="MACs",
+                          fname="scaling_grid.pdf", *, wandb_run=None):
     """2x4 small-multiples: one scaling curve per family, shared axes.
 
     Designed as a double-column figure for an overview of all family
     scaling behaviours without the visual clutter of the combined plot.
 
+    Parameterized on the x-axis so the same layout can be reused to
+    probe each resource axis:
+
+        x_col="macs"      -> compute view (``scaling_grid.pdf``)
+        x_col="size_mb"   -> storage view (``scaling_grid_size.pdf``)
+
+    The reason this is useful is that the three resource axes — MACs
+    (computing), latency (real-time), and on-disk size (storage) — do
+    **not** rank variants identically. An FPGA deployment decision that
+    optimises for BRAM usage (storage) may land on a different winner
+    than one optimising for DSP cycles (MACs).
+
     When ``wandb_run`` is provided, the figure is also logged to W&B
-    under the media key ``figures/variant/scaling_grid``.
+    under a key dispatched on ``fname``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -927,27 +942,32 @@ def generate_scaling_grid(output_dir, *, wandb_run=None):
     if agg is None:
         return
 
+    agg = agg.dropna(subset=[x_col])
+    if agg.empty:
+        print(f"No data for scaling grid with x_col={x_col!r}.")
+        return
+
     # Pad to 8 panels (2x4)
     n_panels = 8
     ymin = max(0.78, float(agg["acc_mean"].min()) - 0.02)
     ymax = min(1.005, float(agg["acc_mean"].max()) + 0.015)
-    xmin = max(1.0, float(agg["macs"].min()) * 0.5)
-    xmax = float(agg["macs"].max()) * 2.0
+    xmin = max(1e-3, float(agg[x_col].min()) * 0.5)
+    xmax = float(agg[x_col].max()) * 2.0
 
     fig, axes = plt.subplots(2, 4, figsize=FIG_GRID, sharex=True, sharey=True)
     for ax, family in zip(axes.flat, families):
-        # Sort by MACs — the x-axis — so the connecting line is monotone in x.
-        # Size-tag ordinal sorting would be wrong here because size order and
-        # MAC order can diverge (a wider shallow variant may have fewer MACs
-        # than a narrower deep one), which would produce zig-zag inside a
-        # panel on the log-MACs axis.
+        # Sort by the x-axis quantity so the connecting line is monotone
+        # in x. Size-tag ordinal sorting would be wrong here because size
+        # order and resource order can diverge (a wider shallow variant
+        # may have fewer MACs than a narrower deep one), which would
+        # produce zig-zag inside a panel on the log-x axis.
         fam = (agg[agg["family"] == family]
-               .dropna(subset=["macs"])
-               .sort_values("macs"))
+               .dropna(subset=[x_col])
+               .sort_values(x_col))
         color = FAMILY_COLORS.get(family, "#333333")
         marker = FAMILY_MARKERS.get(family, "o")
         ls = FAMILY_LINESTYLES.get(family, "-")
-        x = fam["macs"].values
+        x = fam[x_col].values
         y = fam["acc_mean"].values
         yerr = fam["acc_std"].values
 
@@ -967,15 +987,21 @@ def generate_scaling_grid(output_dir, *, wandb_run=None):
     for ax in axes.flat[len(families):n_panels]:
         ax.set_visible(False)
 
-    fig.supxlabel("MACs", fontsize=8, y=0.02)
+    fig.supxlabel(x_label, fontsize=8, y=0.02)
     fig.supylabel("Accuracy", fontsize=8, x=0.005)
     fig.subplots_adjust(left=0.06, right=0.99, top=0.94, bottom=0.10,
                         wspace=0.12, hspace=0.40)
+    # Dispatch the W&B media key on fname so the MACs grid and the
+    # size grid land under separate panels in the report run.
+    if "size" in fname:
+        wandb_key = "figures/variant/scaling_grid_size"
+        caption = "Scaling grid: per-family small-multiples (Accuracy vs on-disk size)"
+    else:
+        wandb_key = "figures/variant/scaling_grid"
+        caption = "Scaling grid: per-family small-multiples (Accuracy vs MACs)"
     _emit_pdf(
-        fig, figures_dir, "scaling_grid.pdf",
-        wandb_run=wandb_run,
-        wandb_key="figures/variant/scaling_grid",
-        caption="Scaling grid: per-family small-multiples (Accuracy vs MACs)",
+        fig, figures_dir, fname,
+        wandb_run=wandb_run, wandb_key=wandb_key, caption=caption,
     )
 
 
@@ -988,15 +1014,15 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
     Same colors as scaling_curves so the figures can be cross-referenced.
 
     Parameterized on the x-axis so the same layout can be reused for
-    accuracy-vs-MACs (``pareto.pdf``) and accuracy-vs-latency
-    (``pareto_latency.pdf``). A scatter + global Pareto front copes gracefully
-    with latency clumps caused by kernel-launch overhead on small variants —
-    unlike the scaling-envelope curve, which becomes unreadable when multiple
-    variants share the same latency but have very different accuracies.
+    accuracy-vs-MACs (``pareto.pdf``) and accuracy-vs-size
+    (``pareto_size.pdf``). Accuracy-vs-latency is handled by the
+    dedicated :func:`generate_pareto_latency_focus`, whose custom
+    log-error layout copes with kernel-launch clumps that this generic
+    helper cannot render cleanly.
 
     When ``wandb_run`` is provided, the figure is also logged to W&B
     under either ``figures/variant/pareto_macs`` or
-    ``figures/variant/pareto_latency``, dispatched on ``fname``.
+    ``figures/variant/pareto_size``, dispatched on ``fname``.
     """
     apply_publication_style()
     figures_dir = Path(output_dir) / "figures"
@@ -1075,18 +1101,215 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
     fig.subplots_adjust(left=0.16, right=0.97, top=0.97, bottom=0.32)
-    # The pareto function is called twice with different ``fname`` values
-    # (``pareto.pdf`` and ``pareto_latency.pdf``); each gets a distinct
-    # W&B media key so they show up as separate panels in the report run.
-    if "latency" in fname:
-        wandb_key = "figures/variant/pareto_latency"
-        caption = "Pareto front: Accuracy vs Latency"
+    # This function is called twice with different ``fname`` values —
+    # ``pareto.pdf`` (compute / MACs) and ``pareto_size.pdf`` (storage /
+    # on-disk MB). Each gets a distinct W&B media key so they show up
+    # as separate panels in the report run. The real-time latency view
+    # is generated separately by ``generate_pareto_latency_focus``.
+    if "size" in fname:
+        wandb_key = "figures/variant/pareto_size"
+        caption = "Pareto front: Accuracy vs on-disk size (MB)"
     else:
         wandb_key = "figures/variant/pareto_macs"
         caption = "Pareto front: Accuracy vs MACs"
     _emit_pdf(
         fig, figures_dir, fname,
         wandb_run=wandb_run, wandb_key=wandb_key, caption=caption,
+    )
+
+
+# Hardware-specific kernel-launch floor on RTX A1000. Latency below
+# this value is dominated by the per-call CUDA launch overhead, not by
+# the model's arithmetic — variants in this region cluster regardless
+# of compute. We shade the region in latency-focused figures so the
+# clump is interpreted correctly.
+KERNEL_LAUNCH_FLOOR_MS = 0.14
+
+
+def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
+    """Latency-focused Pareto plot — accuracy vs latency in **error rate** space.
+
+    A specialised replacement for the generic
+    :func:`generate_pareto_publication` when ``x_col="latency"``. Built
+    after extensive iteration on the Acc-vs-Latency view because that
+    figure is the primary deployment-decision artefact for embedded
+    inference.
+
+    Why a dedicated helper rather than reusing
+    :func:`generate_pareto_publication` ?
+
+    1. **Log error rate, not linear accuracy.** With every competitive
+       variant landing in [0.94, 0.99] accuracy, a linear y-axis
+       compresses the most interesting differences into ~5 % of the
+       canvas. Plotting :math:`1 - \\mathrm{acc}` on a log axis spreads
+       1.7 % vs 2.7 % vs 4.0 % error into clearly distinct bands —
+       which is the entire point of the figure.
+    2. **Clipped y-window.** A handful of pico variants land at
+       40–50 % error and would otherwise blow up the y-range. We clip
+       the window at err = 0.15 (acc = 0.85) and annotate excluded
+       outliers with explicit upward arrows + italic name labels at
+       the top edge, so the clipping is transparent.
+    3. **Kernel-launch floor.** On the RTX A1000 the per-call CUDA
+       launch overhead is ~0.13 ms, creating a clump of small variants
+       at the leftmost x-edge that share latency but not accuracy.
+       The shaded floor band makes that hardware artefact explicit so
+       the reader does not over-interpret the clump.
+    4. **Numbered Pareto badges + side-key table.** With six Pareto
+       points, three of which sit inside the kernel-launch clump,
+       inline labels collide unreadably. Numeric badges next to the
+       gold stars + a fixed-width table in the lower-right corner
+       solve this and double as a deployment cheat-sheet (model,
+       latency, accuracy).
+    5. **Iso-accuracy guides.** Horizontal dotted lines at acc =
+       {0.90, 0.95, 0.97, 0.98, 0.99} let the reader translate any
+       error reading on the left axis into a familiar accuracy
+       reading on the right.
+
+    Output: ``pareto_latency.pdf`` under ``<output_dir>/figures``.
+    W&B media key: ``figures/variant/pareto_latency``.
+    """
+    apply_publication_style()
+    figures_dir = Path(output_dir) / "figures"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    agg, families = _load_tier1_aggregated(output_dir)
+    if agg is None:
+        return
+
+    df = agg.dropna(subset=["latency"]).copy()
+    if df.empty:
+        return
+    df["err"] = 1.0 - df["acc_mean"]
+
+    # ── y-window: clip below 0.85 accuracy (err = 0.15) so the worst
+    # pico outliers don't dominate the canvas. Anything excluded gets
+    # an explicit "↑ name" annotation at the top edge.
+    err_hi = 0.15
+    err_lo = 0.013
+    in_view = df[df["err"] <= err_hi]
+    clipped = df[df["err"] > err_hi]
+
+    # 7.0 x 4.2 → full text width, taller than FIG_DOUBLE so the
+    # side-key + family legend + iso-acc rail all fit without cramping.
+    fig, ax = plt.subplots(figsize=(7.0, 4.2))
+
+    # ── kernel-launch floor band + label
+    ax.axvspan(0, KERNEL_LAUNCH_FLOOR_MS, color="0.85", alpha=0.45, zorder=0)
+    ax.text(KERNEL_LAUNCH_FLOOR_MS * 0.96, err_lo * 1.20,
+            "kernel-launch\nfloor",
+            ha="right", va="bottom", fontsize=5.5, color="0.30",
+            style="italic")
+
+    # ── clipped outliers as upward arrows at the top edge
+    for _, row in clipped.iterrows():
+        c = FAMILY_COLORS.get(row["family"], "#333")
+        ax.annotate("",
+                    xy=(row["latency"], err_hi * 0.985),
+                    xytext=(row["latency"], err_hi * 0.78),
+                    arrowprops=dict(arrowstyle="->", color=c, lw=0.9))
+        ax.text(row["latency"] * 1.08, err_hi * 0.84, row["model_name"],
+                ha="left", va="center", fontsize=5.5, color=c,
+                style="italic")
+
+    # ── per-family scatter (no zigzag connecting lines)
+    for fam in families:
+        sub = in_view[in_view["family"] == fam]
+        if sub.empty:
+            continue
+        c = FAMILY_COLORS.get(fam, "#333")
+        ax.scatter(sub["latency"], sub["err"],
+                   s=38, color=c, marker=FAMILY_MARKERS.get(fam, "o"),
+                   edgecolor="white", linewidth=0.4, label=fam, zorder=3)
+
+    # ── Pareto front (computed on the FULL dataset so it's truthful
+    # even when some points lie outside the displayed y-window)
+    pareto_idx = _pareto_front(df["latency"].values, df["acc_mean"].values)
+    pdf_pts = df.iloc[pareto_idx].sort_values("latency").reset_index(drop=True)
+    ax.plot(pdf_pts["latency"], pdf_pts["err"],
+            color="black", linestyle="--", linewidth=1.5, alpha=0.9, zorder=4)
+    ax.scatter(pdf_pts["latency"], pdf_pts["err"],
+               facecolor="gold", edgecolor="black", linewidth=1.0,
+               s=140, zorder=5, marker="*", label="Pareto front")
+
+    # numeric badges next to each star
+    for i, row in pdf_pts.iterrows():
+        ax.annotate(str(i + 1),
+                    xy=(row["latency"], row["err"]),
+                    xytext=(7, 6), textcoords="offset points",
+                    ha="left", va="bottom",
+                    fontsize=7.5, color="black", fontweight="bold",
+                    zorder=6)
+
+    # ── side-key box anchored to the empty lower-right quadrant
+    key_lines = [
+        f"{'#':<2s}{'Model':<22s}{'Lat (ms)':>10s}{'Acc':>9s}",
+        "─" * 43,
+    ]
+    for i, row in pdf_pts.iterrows():
+        key_lines.append(
+            f"{i + 1:<2d}{row['model_name']:<22s}"
+            f"{row['latency']:>10.2f}{row['acc_mean']:>9.3f}"
+        )
+    ax.text(0.985, 0.025, "\n".join(key_lines),
+            transform=ax.transAxes, ha="right", va="bottom",
+            fontsize=5.7, family="monospace", linespacing=1.4,
+            bbox=dict(boxstyle="round,pad=0.4",
+                      facecolor="white", edgecolor="0.4",
+                      linewidth=0.5, alpha=0.95),
+            zorder=7)
+
+    # ── iso-accuracy guides — horizontal lines + right-edge labels
+    for a in (0.90, 0.95, 0.97, 0.98, 0.99):
+        e = 1 - a
+        if err_lo <= e <= err_hi:
+            ax.axhline(e, color="0.55", linestyle=":", linewidth=0.5, zorder=1)
+            ax.text(1.005, e, f"  {a:.2f}",
+                    transform=ax.get_yaxis_transform(),
+                    va="center", ha="left",
+                    fontsize=5.8, color="0.30")
+
+    # ── axes formatting
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlim(df["latency"].min() * 0.85, df["latency"].max() * 1.15)
+    ax.set_ylim(err_lo, err_hi)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _: f"{v:g}"))
+
+    def _fmt_err(v, _):
+        if v >= 0.1:
+            return f"{v:.1f}"
+        if v >= 0.01:
+            return f"{v:.2f}"
+        return f"{v:.3f}"
+
+    # Custom log locator on the y-axis: show 1×10^k AND 2,3,5×10^k so the
+    # reader sees ticks at 0.02 / 0.03 / 0.05 / 0.1 instead of just 0.1.
+    ax.yaxis.set_major_locator(
+        mticker.LogLocator(base=10.0, subs=(1.0, 2.0, 3.0, 5.0), numticks=12)
+    )
+    ax.yaxis.set_minor_locator(
+        mticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1, numticks=20)
+    )
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(_fmt_err))
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+    ax.grid(True, which="major", alpha=0.30, linewidth=0.4)
+    ax.grid(True, which="minor", alpha=0.12, linewidth=0.3)
+    ax.set_xlabel("Median inference latency (ms)  —  batch = 1, RTX A1000")
+    ax.set_ylabel("Error rate  (1 − accuracy)   [log scale]")
+
+    # ── family legend in the upper-right (sparser quadrant — only the
+    # high-error pico outliers live up there and they're tagged inline)
+    ax.legend(loc="upper right", ncol=3, columnspacing=0.7,
+              handletextpad=0.35, borderaxespad=0.5, fontsize=6.3,
+              frameon=True, framealpha=0.92)
+
+    fig.subplots_adjust(left=0.085, right=0.93, top=0.97, bottom=0.13)
+    _emit_pdf(
+        fig, figures_dir, "pareto_latency.pdf",
+        wandb_run=wandb_run,
+        wandb_key="figures/variant/pareto_latency",
+        caption=("Pareto front: Accuracy vs Latency "
+                 "(log-error space, kernel-floor annotated, side-keyed)"),
     )
 
 
@@ -1482,12 +1705,29 @@ def regenerate_and_publish_figures(args, summary_df=None, *, wandb_publish=True)
         # Variant-axis figures (only meaningful with --scaling)
         if args.scaling:
             generate_scaling_curves(args.output_dir, wandb_run=run)
+            # Small-multiples scaling grid — one curve per family, over
+            # each resource axis. MACs = compute view; on-disk size =
+            # storage view (complementary because a wider shallow variant
+            # can have fewer MACs but a much larger on-disk footprint).
             generate_scaling_grid(args.output_dir, wandb_run=run)
+            generate_scaling_grid(
+                args.output_dir,
+                x_col="size_mb", x_label="Model size (MB)",
+                fname="scaling_grid_size.pdf",
+                wandb_run=run,
+            )
+            # Pareto fronts over the three resource axes:
+            #   MACs     -> computing (FLOPs)
+            #   latency  -> real-time  (wall-clock inference)
+            #   size_mb  -> storage    (on-disk / BRAM footprint)
             generate_pareto_publication(args.output_dir, wandb_run=run)
+            # Latency uses a specialised log-error design (kernel-floor
+            # shading, side-key, clipped-outlier arrows, iso-acc guides).
+            generate_pareto_latency_focus(args.output_dir, wandb_run=run)
             generate_pareto_publication(
                 args.output_dir,
-                x_col="latency", x_label="Latency (ms)",
-                x_log=True, fname="pareto_latency.pdf",
+                x_col="size_mb", x_label="Model size (MB)",
+                x_log=True, fname="pareto_size.pdf",
                 wandb_run=run,
             )
 
