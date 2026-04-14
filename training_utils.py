@@ -15,7 +15,6 @@ import tempfile
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
-import seaborn as sns
 import wandb
 
 from sklearn.metrics import classification_report, confusion_matrix
@@ -244,15 +243,10 @@ def run_post_testing(run, model, loader, criterion, device, class_names, prefix=
     run.summary[f"{prefix}/accuracy"] = acc
     run.summary[f"{prefix}/loss"] = loss
 
-    # Confusion matrix
+    # Confusion matrix — Blues + LogNorm (centralised in pub_utils)
+    from pub_utils import plot_confusion_matrix
     cm = confusion_matrix(y_true, y_pred)
-    fig_cm, ax_cm = plt.subplots(figsize=(7, 5))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names, ax=ax_cm)
-    ax_cm.set_xlabel("Predicted")
-    ax_cm.set_ylabel("True")
-    ax_cm.set_title(f"{prefix} Confusion Matrix (Accuracy: {acc:.4f})")
-    plt.tight_layout()
+    fig_cm, ax_cm = plot_confusion_matrix(cm, class_names)
     run.log({f"{prefix}/confusion_matrix": wandb.Image(fig_cm)})
     plt.close(fig_cm)
 

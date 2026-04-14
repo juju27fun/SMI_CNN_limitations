@@ -186,15 +186,10 @@ def run_post_evaluation(run, model, loader, criterion, device, class_names, pref
     run.summary[f"{prefix}/accuracy"] = acc
     run.summary[f"{prefix}/loss"] = loss
 
-    # Confusion matrix — seaborn heatmap
+    # Confusion matrix — Blues + LogNorm (centralised in pub_utils)
+    from pub_utils import plot_confusion_matrix
     cm = confusion_matrix(y_true, y_pred)
-    fig_cm, ax_cm = plt.subplots(figsize=(8, 6))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names, ax=ax_cm)
-    ax_cm.set_xlabel("Predicted")
-    ax_cm.set_ylabel("True")
-    ax_cm.set_title(f"{prefix} Confusion Matrix (Accuracy: {acc:.2%})")
-    plt.tight_layout()
+    fig_cm, _ = plot_confusion_matrix(cm, class_names)
     run.log({f"{prefix}/confusion_matrix": wandb.Image(fig_cm)})
     plt.close(fig_cm)
 
@@ -489,6 +484,14 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
     # --- W&B plots ---
 
     # Score histograms for all 4 methods
+    plt.rcParams.update({
+        "pdf.fonttype": 42, "ps.fonttype": 42,
+        "savefig.dpi": 300, "savefig.bbox": "standard",
+        "font.family": "serif", "font.size": 8,
+        "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+    })
+
     hist_configs = [
         ("MSP", msp_id, msp_noise, "Max Softmax Probability", "msp"),
         ("Energy", energy_id, energy_noise, "Energy Score (-logsumexp)", "energy"),
@@ -503,29 +506,37 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
 
     for label, id_vals, noise_vals, xlabel, key in hist_configs:
         m = methods[label]
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(3.39, 2.10))
         ax.hist(id_vals, bins=_safe_bins(id_vals), alpha=0.6,
-                label=f"In-dist (n={n_id})", color="#1f77b4", density=True)
+                label=f"In-dist (n={n_id})", color="#0072B2", density=True)
         ax.hist(noise_vals, bins=_safe_bins(noise_vals), alpha=0.6,
-                label=f"Noise (n={n_noise})", color="#d62728", density=True)
+                label=f"Noise (n={n_noise})", color="#D55E00", density=True)
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Density")
-        ax.set_title(f"{label} Distribution (AUROC={m['auroc']:.3f})")
-        ax.legend()
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        ax.legend(frameon=False)
+        fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
         run.log({f"noise_ood/{key}_histogram": wandb.Image(fig)})
         plt.close(fig)
 
     # Prediction distribution bar chart
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bar_colors = ["#1f77b4", "#ff7f0e", "#2ca02c"]
+    fig, ax = plt.subplots(figsize=(3.39, 2.10))
+    bar_colors = ["#0072B2", "#E69F00", "#009E73"]
     bars = ax.bar(class_names, noise_class_pcts,
                   color=bar_colors[:len(class_names)], edgecolor="white")
     for bar, pct in zip(bars, noise_class_pcts):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
-                f"{pct:.1f}%", ha="center", fontsize=10)
+                f"{pct:.1f}%", ha="center", fontsize=8)
     ax.set_ylabel("% of noise samples")
-    ax.set_title(f"Model predictions on noise (n={n_noise})")
     ax.set_ylim(0, max(noise_class_pcts) * 1.2 if max(noise_class_pcts) > 0 else 100)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(True, alpha=0.3, linewidth=0.4)
+    ax.set_axisbelow(True)
+    fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
     run.log({"noise_ood/prediction_distribution": wandb.Image(fig)})
     plt.close(fig)
 
@@ -603,15 +614,19 @@ def run_ood_evaluation(run, model, id_loader, noise_loader, device, class_names,
         run.summary["noise_ood/aupr_energy_tuned"] = et["aupr"]
 
         # Histogram
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(3.39, 2.10))
         ax.hist(energy_tuned_id, bins=_safe_bins(energy_tuned_id), alpha=0.6,
-                label=f"In-dist (n={n_id})", color="#1f77b4", density=True)
+                label=f"In-dist (n={n_id})", color="#0072B2", density=True)
         ax.hist(energy_tuned_noise, bins=_safe_bins(energy_tuned_noise), alpha=0.6,
-                label=f"Noise (n={n_noise})", color="#d62728", density=True)
+                label=f"Noise (n={n_noise})", color="#D55E00", density=True)
         ax.set_xlabel(f"Energy Score (T={best_T_energy})")
         ax.set_ylabel("Density")
-        ax.set_title(f"Energy Tuned Distribution (AUROC={et['auroc']:.3f})")
-        ax.legend()
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        ax.legend(frameon=False)
+        fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
         run.log({"noise_ood/energy_tuned_histogram": wandb.Image(fig)})
         plt.close(fig)
 
@@ -816,31 +831,59 @@ def extract_multilayer_features(model, loader, device):
 
 def plot_dimensionality_reduction(features, labels, class_names, prefix):
     """Generate PCA and t-SNE scatter plots colored by class. Returns (pca_fig, tsne_fig)."""
+    plt.rcParams.update({
+        "pdf.fonttype": 42, "ps.fonttype": 42,
+        "savefig.dpi": 300, "savefig.bbox": "standard",
+        "font.family": "serif", "font.size": 8,
+        "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+    })
+
+    # CVD-safe colors and markers for class distinction (§5 three-channel)
+    _colors = ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7"]
+    _markers = ["o", "s", "^", "D", "v"]
+
     # PCA
     pca = PCA(n_components=2)
     pca_result = pca.fit_transform(features)
 
-    pca_fig, ax = plt.subplots(figsize=(8, 6))
+    pca_fig, ax = plt.subplots(figsize=(3.39, 2.10))
     for i, cls in enumerate(class_names):
         mask = labels == i
-        ax.scatter(pca_result[mask, 0], pca_result[mask, 1], label=cls, alpha=0.6, s=15)
-    ax.set_title(f"PCA - {prefix}")
+        ax.scatter(pca_result[mask, 0], pca_result[mask, 1],
+                   label=cls, alpha=0.6, s=20,
+                   color=_colors[i % len(_colors)],
+                   marker=_markers[i % len(_markers)],
+                   edgecolors="white", linewidths=0.3)
     ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]:.1%})")
     ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]:.1%})")
-    ax.legend()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(True, alpha=0.3, linewidth=0.4)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False)
+    pca_fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
 
     # t-SNE
     tsne = TSNE(n_components=2, random_state=42, perplexity=30)
     tsne_result = tsne.fit_transform(features)
 
-    tsne_fig, ax = plt.subplots(figsize=(8, 6))
+    tsne_fig, ax = plt.subplots(figsize=(3.39, 2.10))
     for i, cls in enumerate(class_names):
         mask = labels == i
-        ax.scatter(tsne_result[mask, 0], tsne_result[mask, 1], label=cls, alpha=0.6, s=15)
-    ax.set_title(f"t-SNE - {prefix}")
+        ax.scatter(tsne_result[mask, 0], tsne_result[mask, 1],
+                   label=cls, alpha=0.6, s=20,
+                   color=_colors[i % len(_colors)],
+                   marker=_markers[i % len(_markers)],
+                   edgecolors="white", linewidths=0.3)
     ax.set_xlabel("t-SNE 1")
     ax.set_ylabel("t-SNE 2")
-    ax.legend()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(True, alpha=0.3, linewidth=0.4)
+    ax.set_axisbelow(True)
+    ax.legend(frameon=False)
+    tsne_fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
 
     return pca_fig, tsne_fig
 
@@ -934,32 +977,42 @@ def run_cluster_distance_evaluation(run, test_feats, test_labels, noise_feats,
             key = f"cluster_distances/cosine_{cluster_names[i].lower()}_vs_{cluster_names[j].lower()}"
             run.summary[key] = round(float(mat[i, j]), 4)
 
-    # ── Heatmap ──
-    display = mat.copy()
-    masked = np.ma.array(display, mask=np.isnan(display))
+    # ── Heatmap (lower-triangular, diagonal visible) ──
+    plt.rcParams.update({
+        "pdf.fonttype": 42, "ps.fonttype": 42,
+        "savefig.dpi": 300, "savefig.bbox": "standard",
+        "font.family": "serif", "font.size": 8,
+        "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7,
+    })
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    cmap = plt.cm.YlOrRd.copy()
+    mask = np.triu(np.ones_like(mat, dtype=bool), k=1)
+    display = mat.copy()
+    display[mask] = np.nan
+
+    COL_W = 3.39
+    fig, ax = plt.subplots(figsize=(COL_W, COL_W))
+    cmap = plt.get_cmap("YlGnBu").copy()
     cmap.set_bad("white")
 
-    im = ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="auto")
-    plt.colorbar(im, ax=ax, label="Cosine distance")
+    im = ax.imshow(display, cmap=cmap, vmin=0, aspect="equal")
+    plt.colorbar(im, ax=ax, label="Cosine distance", shrink=0.85)
 
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
     ax.set_xticklabels(cluster_names, rotation=45, ha="right")
     ax.set_yticklabels(cluster_names)
-    ax.set_title(f"Cluster Cosine Distances — {dataset_name}")
 
+    # Annotate only lower triangle + diagonal
     for i in range(n):
-        for j in range(n):
-            val = display[i, j]
-            if not np.isnan(val):
-                text_color = "white" if val > 0.55 else "black"
-                ax.text(j, i, f"{val:.3f}", ha="center", va="center",
-                        fontsize=9, color=text_color)
+        for j in range(i + 1):
+            val = mat[i, j]
+            rgba = cmap(im.norm(val)) if val > 0 else (1, 1, 1, 1)
+            lum = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
+            txt_color = "white" if lum < 0.45 else "black"
+            ax.text(j, i, f"{val:.3f}", ha="center", va="center",
+                    fontsize=8, color=txt_color)
 
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.22, right=0.92, top=0.96, bottom=0.18)
     run.log({"cluster_distances/cosine_distance_heatmap": wandb.Image(fig)})
     plt.close(fig)
     print("  [cluster_distances] Table, scalars, and heatmap logged to W&B")

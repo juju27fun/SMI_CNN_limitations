@@ -733,14 +733,9 @@ def run_3class_evaluation(run, model, loader, criterion, device):
     run.summary[f"{prefix}/accuracy"] = acc_3c
 
     # Confusion matrix (3x3, predictions of class Noise excluded from columns)
+    from pub_utils import plot_confusion_matrix
     cm = confusion_matrix(y_true_3c, y_pred_3c, labels=[0, 1, 2])
-    fig_cm, ax_cm = plt.subplots(figsize=(7, 5))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=PARTICLE_NAMES, yticklabels=PARTICLE_NAMES, ax=ax_cm)
-    ax_cm.set_xlabel("Predicted")
-    ax_cm.set_ylabel("True")
-    ax_cm.set_title(f"3-Class CM (4-class model, Acc: {acc_3c:.4f})")
-    plt.tight_layout()
+    fig_cm, _ = plot_confusion_matrix(cm, PARTICLE_NAMES)
     run.log({f"{prefix}/confusion_matrix": wandb.Image(fig_cm)})
     plt.close(fig_cm)
 

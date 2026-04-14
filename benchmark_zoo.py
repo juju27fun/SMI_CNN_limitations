@@ -42,6 +42,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+from matplotlib.colors import LogNorm
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -143,13 +144,9 @@ FAMILY_LINESTYLES = {
 # ──────────────────────────────────────────────
 # Save figures at exact target dimensions and use \includegraphics{fig.pdf}
 # WITHOUT a width= override so font sizes stay consistent across the paper.
-COL_W = 3.39          # IEEE/Elsevier single-column width (inches)
-DCOL_W = 7.00         # full text width (inches)
+from pub_utils import (COL_W, DCOL_W, FIG_SINGLE, FIG_SINGLE_TALL, FIG_DOUBLE,
+                       apply_publication_style, plot_confusion_matrix)
 GOLD = 1.61803
-
-FIG_SINGLE = (COL_W, COL_W / GOLD)            # 3.39 x 2.10  — compact single column
-FIG_SINGLE_TALL = (COL_W, COL_W * 0.95)       # 3.39 x 3.22  — single column with bottom legend
-FIG_DOUBLE = (DCOL_W, DCOL_W / (GOLD * 1.6))  # 7.00 x 2.70  — wide, short
 FIG_GRID_ROW_H = (DCOL_W * 0.50) / 2          # per-row height of the small-multiples grid
 
 
@@ -191,35 +188,12 @@ def _grid_layout(n_panels: int, n_cols: int | None = None) -> tuple[int, int, tu
     n_rows = max(1, (n_panels + n_cols - 1) // n_cols)
     return n_rows, n_cols, (DCOL_W, FIG_GRID_ROW_H * n_rows)
 
-PUB_RC = {
-    "figure.dpi": 150, "savefig.dpi": 300,
-    "savefig.bbox": "standard",   # NOT "tight" — keeps canvas size constant
-    "savefig.pad_inches": 0.02,
-    "pdf.fonttype": 42, "ps.fonttype": 42,  # TrueType, editable in Illustrator
-    "font.family": "serif",
-    "font.size": 8,
-    "axes.titlesize": 9,
-    "axes.labelsize": 8,
-    "xtick.labelsize": 7,
-    "ytick.labelsize": 7,
-    "legend.fontsize": 7,
-    "axes.linewidth": 0.6,
-    "lines.linewidth": 1.2,
-    "lines.markersize": 4,
-    "grid.linewidth": 0.4,
-    "legend.frameon": False,
-    "legend.handlelength": 1.6,
-    "xtick.major.width": 0.6, "ytick.major.width": 0.6,
-    "xtick.major.size": 3.0, "ytick.major.size": 3.0,
-}
 
 
-def apply_publication_style():
-    """Set matplotlib rcParams for publication-quality figures.
-
-    Idempotent — safe to call multiple times.
-    """
-    plt.rcParams.update(PUB_RC)
+def _remove_chartjunk(ax):
+    """Remove top and right spines from an axes (rule §6)."""
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
 
 
 def _emit_pdf(fig, figures_dir, fname, *, wandb_run=None,
@@ -727,18 +701,11 @@ def _pareto_front(xs, ys):
     return pareto
 
 
-def generate_plots(output_dir):
-    """Generate diagnostic PNG plots (confusion matrices, F1 heatmap, seed
-    boxplot).
-
-    These are *diagnostic* artefacts, not publication figures. The
-    publication PDFs (``scaling_*.pdf``, ``pareto*.pdf``, ``tier_*.pdf``) are
-    produced by their dedicated functions and follow the layout discipline
-    documented in ``doc/variant_plotting.md`` and ``doc/tier_plotting.md``.
-    Anything that has a publication equivalent (accuracy-by-tier bar chart,
-    raster scaling curves, raster Pareto fronts) has been removed from
-    here — keeping it would create a bifurcated, inconsistent output set.
+def generate_plots(output_dir, *, wandb_run=None):
+    """Generate publication-quality plots (confusion matrices, F1 heatmap,
+    seed boxplot) as vector PDFs via ``_emit_pdf``.
     """
+    apply_publication_style()
     runs_dir = Path(output_dir) / "runs"
     figures_dir = Path(output_dir) / "figures"
     figures_dir.mkdir(parents=True, exist_ok=True)
@@ -754,7 +721,7 @@ def generate_plots(output_dir):
 
     df = pd.DataFrame(results)
 
-    # All remaining diagnostic plots operate on Tier 1 only.
+    # All remaining plots operate on Tier 1 only.
     t1 = df[df["tier"] == 1].copy()
     if t1.empty:
         return
@@ -764,48 +731,62 @@ def generate_plots(output_dir):
     if "model_size_tag" not in t1.columns:
         t1["model_size_tag"] = t1["model_name"].apply(infer_size_tag)
 
-    # ── Confusion matrices: best and worst Tier-1 model (diagnostic) ──
+    # ── Confusion matrices: best and worst Tier-1 model ──
     t1_acc = t1.groupby("model_name")["accuracy"].mean()
     for label, mname in (("best", t1_acc.idxmax()), ("worst", t1_acc.idxmin())):
         row = t1[t1["model_name"] == mname].iloc[0]
         cm = np.array(row["confusion_matrix"])
-        fig, ax = plt.subplots(figsize=(6, 5))
-        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                    xticklabels=CLASS_NAMES, yticklabels=CLASS_NAMES, ax=ax)
-        ax.set_xlabel("Predicted")
-        ax.set_ylabel("True")
-        ax.set_title(f"Tier 1 {label.capitalize()} Model: {mname} (acc={row['accuracy']:.4f})")
-        plt.tight_layout()
-        fig.savefig(figures_dir / f"confusion_matrix_{label}_{mname}.png", dpi=150)
-        plt.close(fig)
+        fig, ax = plot_confusion_matrix(cm, CLASS_NAMES)
+        _emit_pdf(fig, figures_dir,
+                  f"confusion_matrix_{label}_{mname}.pdf",
+                  wandb_run=wandb_run,
+                  wandb_key=f"figures/diagnostic/confusion_matrix_{label}",
+                  caption=f"Confusion matrix ({label} Tier-1 model: {mname})")
 
-    # ── Per-class F1 heatmap (diagnostic) ──
+    # ── Per-class F1 heatmap ──
     f1_rows = []
     for _, row in t1.groupby("model_name").first().reset_index().iterrows():
         f1_rows.append({"Model": row["model_name"], **row["per_class_f1"]})
     f1_df = pd.DataFrame(f1_rows).set_index("Model")
-    fig, ax = plt.subplots(figsize=(8, max(4, len(f1_df) * 0.6)))
-    sns.heatmap(f1_df, annot=True, fmt=".3f", cmap="YlOrRd", ax=ax, vmin=0, vmax=1)
-    ax.set_title("Tier 1: Per-Class F1 Score")
-    plt.tight_layout()
-    fig.savefig(figures_dir / "f1_heatmap.png", dpi=150)
-    plt.close(fig)
+    fig, ax = plt.subplots(figsize=FIG_SINGLE)
+    sns.heatmap(f1_df, annot=True, fmt=".3f", cmap="YlGnBu", ax=ax,
+                vmin=0, vmax=1, annot_kws={"size": 7},
+                linewidths=0.3, linecolor="white",
+                cbar_kws={"label": "F1 score", "shrink": 0.85, "pad": 0.03})
+    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+    fig.subplots_adjust(left=0.32, right=0.94, top=0.96, bottom=0.18)
+    _emit_pdf(fig, figures_dir, "f1_heatmap.pdf",
+              wandb_run=wandb_run,
+              wandb_key="figures/diagnostic/f1_heatmap",
+              caption="Per-class F1 heatmap (Tier 1)")
 
-    # ── Seed stability boxplot (diagnostic; needs ≥ 2 seeds per model) ──
+    # ── Seed stability boxplot (needs ≥ 2 seeds per model) ──
     if t1.groupby("model_name").size().max() > 1:
-        models_sorted = t1.groupby("model_name")["accuracy"].mean().sort_values(ascending=False).index
+        models_sorted = (t1.groupby("model_name")["accuracy"]
+                         .mean().sort_values(ascending=False).index)
         t1_sorted = t1.set_index("model_name").loc[models_sorted].reset_index()
-        fig, ax = plt.subplots(figsize=(10, 6))
-        sns.boxplot(data=t1_sorted, x="model_name", y="accuracy", ax=ax, order=models_sorted)
-        ax.set_xlabel("Model")
-        ax.set_ylabel("Accuracy")
-        ax.set_title("Tier 1: Seed Stability (Accuracy Spread)")
-        plt.xticks(rotation=45, ha="right")
-        plt.tight_layout()
-        fig.savefig(figures_dir / "seed_stability_boxplot.png", dpi=150)
-        plt.close(fig)
 
-    print(f"\nDiagnostic plots saved to {figures_dir}/")
+        # Map each model to its family color
+        palette = {m: FAMILY_COLORS.get(get_family(m), "#333333")
+                   for m in models_sorted}
+
+        fig, ax = plt.subplots(figsize=FIG_SINGLE_TALL)
+        sns.boxplot(data=t1_sorted, y="model_name", x="accuracy", ax=ax,
+                    order=models_sorted, orient="h", hue="model_name",
+                    palette=palette, legend=False,
+                    linewidth=0.8, fliersize=3)
+        ax.set_ylabel("")
+        ax.set_xlabel("Accuracy")
+        _remove_chartjunk(ax)
+        ax.grid(True, alpha=0.3, linewidth=0.4, axis="x")
+        ax.set_axisbelow(True)
+        fig.subplots_adjust(left=0.38, right=0.97, top=0.97, bottom=0.14)
+        _emit_pdf(fig, figures_dir, "seed_stability_boxplot.pdf",
+                  wandb_run=wandb_run,
+                  wandb_key="figures/diagnostic/seed_stability",
+                  caption="Seed stability boxplot (Tier 1)")
+
+    print(f"\nPlots saved to {figures_dir}/")
 
 
 # ──────────────────────────────────────────────
@@ -936,6 +917,8 @@ def generate_scaling_curves(output_dir, *, wandb_run=None):
         ax.set_xlabel(x_label)
         ax.set_ylabel("Accuracy")
         ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        _remove_chartjunk(ax)
 
         # Legend below the axes — keeps the data area clean.
         # 3 cols × 3 rows fits the 8 families without clipping at 3.39" width.
@@ -1022,15 +1005,17 @@ def generate_scaling_grid(output_dir, x_col="macs", x_label="MACs",
 
         ax.fill_between(x, y - yerr, y + yerr, color=color, alpha=0.20, linewidth=0)
         ax.plot(x, y, color=color, marker=marker, linestyle=ls,
-                markersize=3.4, linewidth=1.0,
+                markersize=4, linewidth=1.2,
                 markeredgecolor="white", markeredgewidth=0.3)
 
         ax.set_xscale("log")
         ax.set_xlim(xmin, xmax)
         ax.set_ylim(ymin, ymax)
         ax.set_title(family, color=color, pad=2, fontsize=8)
-        ax.grid(True, alpha=0.3, linewidth=0.3)
-        ax.tick_params(labelsize=6)
+        ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        _remove_chartjunk(ax)
+        ax.tick_params(labelsize=7)
 
     # Hide unused axes if the family count does not fill the grid.
     for ax in axes.flat[len(families):n_panels]:
@@ -1041,8 +1026,8 @@ def generate_scaling_grid(output_dir, x_col="macs", x_label="MACs",
     # the subplot tile size independent of the added legend strip.
     legend_frac = legend_h / figsize[1]
     fig.supxlabel(x_label, fontsize=8, y=legend_frac + 0.02)
-    fig.supylabel("Accuracy", fontsize=8, x=0.005)
-    fig.subplots_adjust(left=0.06, right=0.99,
+    fig.supylabel("Accuracy", fontsize=8, x=0.02)
+    fig.subplots_adjust(left=0.08, right=0.99,
                         top=1.0 - (0.06 * fig_h / figsize[1]),
                         bottom=legend_frac + 0.08,
                         wspace=0.12, hspace=0.40)
@@ -1114,14 +1099,16 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
                    s=22, edgecolor="white", linewidth=0.4,
                    label=family, zorder=3)
 
-    # Pareto front line
+    # Pareto front line — only through visible points
     pdf_pts = valid.iloc[pareto_idx].sort_values(x_col)
-    if len(pdf_pts) > 1:
-        ax.plot(pdf_pts[x_col], pdf_pts["acc_mean"],
+    pdf_pts_visible = pdf_pts[pdf_pts["acc_mean"] >= ymin]
+    pdf_pts_clipped = pdf_pts[pdf_pts["acc_mean"] < ymin]
+    if len(pdf_pts_visible) > 1:
+        ax.plot(pdf_pts_visible[x_col], pdf_pts_visible["acc_mean"],
                 color="black", linestyle="--", linewidth=0.8,
                 alpha=0.7, zorder=2, label="Pareto front")
-    # Highlight Pareto points
-    ax.scatter(pdf_pts[x_col], pdf_pts["acc_mean"],
+    # Highlight visible Pareto points
+    ax.scatter(pdf_pts_visible[x_col], pdf_pts_visible["acc_mean"],
                facecolor="none", edgecolor="black", linewidth=0.8,
                s=42, zorder=4)
 
@@ -1130,13 +1117,40 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
     # the axes. This keeps the front uncluttered while still identifying
     # every recommended architecture.
     pdf_pts_r = pdf_pts.reset_index(drop=True)
+    # Badge background box so numbers stay readable over data points.
+    badge_bbox = dict(boxstyle="round,pad=0.12", facecolor="white",
+                      edgecolor="none", alpha=0.85)
+    # Right-offset the early badges (they sit near the left axis edge)
+    # and left-offset the later ones (which have room on log-scale).
+    badge_offsets = [(6, 8), (6, -12), (6, 14), (6, -16),
+                     (-14, 8), (-14, -12), (-14, 14)]
     for i, row in pdf_pts_r.iterrows():
+        if row["acc_mean"] < ymin:
+            # Clipped below visible range — draw downward arrow + badge
+            # at the bottom edge, matching the latency plot's treatment
+            # of out-of-range outliers (§B12).
+            c = FAMILY_COLORS.get(row["family"], "#333")
+            ax.annotate("",
+                        xy=(row[x_col], ymin),
+                        xytext=(row[x_col], ymin + (ymax - ymin) * 0.06),
+                        arrowprops=dict(arrowstyle="->", color=c, lw=0.9),
+                        zorder=5)
+            ax.annotate(f"{i + 1}",
+                        xy=(row[x_col], ymin + (ymax - ymin) * 0.065),
+                        xytext=(4, 2), textcoords="offset points",
+                        ha="left", va="bottom",
+                        fontsize=7, color="black", fontweight="bold",
+                        bbox=badge_bbox, zorder=6)
+            continue
+        dx, dy = badge_offsets[i % len(badge_offsets)]
+        va = "bottom" if dy > 0 else "top"
+        ha = "left" if dx > 0 else "right"
         ax.annotate(str(i + 1),
                     xy=(row[x_col], row["acc_mean"]),
-                    xytext=(5, 4), textcoords="offset points",
-                    ha="left", va="bottom",
-                    fontsize=6, color="black", fontweight="bold",
-                    zorder=5)
+                    xytext=(dx, dy), textcoords="offset points",
+                    ha=ha, va=va,
+                    fontsize=8, color="black", fontweight="bold",
+                    bbox=badge_bbox, zorder=5)
 
     key_text = "\n".join(
         f"{i + 1}. {row['model_name']}"
@@ -1145,10 +1159,10 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
     ax.text(0.975, 0.03, key_text,
             transform=ax.transAxes,
             ha="right", va="bottom",
-            fontsize=6, family="serif", linespacing=1.2,
+            fontsize=7, family="serif", linespacing=1.2,
             bbox=dict(boxstyle="round,pad=0.35",
                       facecolor="white", edgecolor="0.5",
-                      linewidth=0.4),
+                      linewidth=0.4, alpha=0.85),
             zorder=6)
 
     if x_log:
@@ -1157,6 +1171,8 @@ def generate_pareto_publication(output_dir, x_col="macs", x_label="MACs",
     ax.set_xlabel(x_label)
     ax.set_ylabel("Accuracy")
     ax.grid(True, alpha=0.3, linewidth=0.4)
+    ax.set_axisbelow(True)
+    _remove_chartjunk(ax)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
@@ -1257,7 +1273,7 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
     ax.axvspan(0, KERNEL_LAUNCH_FLOOR_MS, color="0.85", alpha=0.45, zorder=0)
     ax.text(KERNEL_LAUNCH_FLOOR_MS * 0.96, err_lo * 1.20,
             "kernel-launch\nfloor",
-            ha="right", va="bottom", fontsize=5.5, color="0.30",
+            ha="right", va="bottom", fontsize=7, color="0.30",
             style="italic")
 
     # ── clipped outliers as upward arrows at the top edge
@@ -1267,9 +1283,6 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
                     xy=(row["latency"], err_hi * 0.985),
                     xytext=(row["latency"], err_hi * 0.78),
                     arrowprops=dict(arrowstyle="->", color=c, lw=0.9))
-        ax.text(row["latency"] * 1.08, err_hi * 0.84, row["model_name"],
-                ha="left", va="center", fontsize=5.5, color=c,
-                style="italic")
 
     # ── per-family scatter (no zigzag connecting lines)
     for fam in families:
@@ -1288,17 +1301,24 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
     ax.plot(pdf_pts["latency"], pdf_pts["err"],
             color="black", linestyle="--", linewidth=1.5, alpha=0.9, zorder=4)
     ax.scatter(pdf_pts["latency"], pdf_pts["err"],
-               facecolor="gold", edgecolor="black", linewidth=1.0,
-               s=140, zorder=5, marker="*", label="Pareto front")
+               facecolor="none", edgecolor="black", linewidth=0.8,
+               s=42, zorder=5)
 
-    # numeric badges next to each star
+    # numeric badges next to each star — cycle through quadrants so
+    # tightly-spaced points in the kernel-launch clump stay readable.
+    _lat_badge_offsets = [(7, 7), (7, -10), (-14, 7), (-14, -10)]
+    _lat_badge_bbox = dict(boxstyle="round,pad=0.12", facecolor="white",
+                           edgecolor="none", alpha=0.85)
     for i, row in pdf_pts.iterrows():
+        dx, dy = _lat_badge_offsets[i % len(_lat_badge_offsets)]
+        va = "bottom" if dy > 0 else "top"
+        ha = "left" if dx > 0 else "right"
         ax.annotate(str(i + 1),
                     xy=(row["latency"], row["err"]),
-                    xytext=(7, 6), textcoords="offset points",
-                    ha="left", va="bottom",
-                    fontsize=7.5, color="black", fontweight="bold",
-                    zorder=6)
+                    xytext=(dx, dy), textcoords="offset points",
+                    ha=ha, va=va,
+                    fontsize=8, color="black", fontweight="bold",
+                    bbox=_lat_badge_bbox, zorder=6)
 
     # ── side-key box anchored to the empty lower-right quadrant
     key_lines = [
@@ -1312,10 +1332,10 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
         )
     ax.text(0.985, 0.025, "\n".join(key_lines),
             transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=5.7, family="monospace", linespacing=1.4,
+            fontsize=7, family="monospace", linespacing=1.4,
             bbox=dict(boxstyle="round,pad=0.4",
                       facecolor="white", edgecolor="0.4",
-                      linewidth=0.5, alpha=0.95),
+                      linewidth=0.5, alpha=0.85),
             zorder=7)
 
     # ── iso-accuracy guides — horizontal lines + right-edge labels
@@ -1326,7 +1346,7 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
             ax.text(1.005, e, f"  {a:.2f}",
                     transform=ax.get_yaxis_transform(),
                     va="center", ha="left",
-                    fontsize=5.8, color="0.30")
+                    fontsize=7, color="0.30")
 
     # ── axes formatting
     ax.set_xscale("log")
@@ -1356,12 +1376,13 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
     ax.grid(True, which="minor", alpha=0.12, linewidth=0.3)
     ax.set_xlabel("Median inference latency (ms)  —  batch = 1, RTX A1000")
     ax.set_ylabel("Error rate  (1 − accuracy)   [log scale]")
+    _remove_chartjunk(ax)
 
     # ── family legend in the upper-right (sparser quadrant — only the
     # high-error pico outliers live up there and they're tagged inline)
     ax.legend(loc="upper right", ncol=3, columnspacing=0.7,
-              handletextpad=0.35, borderaxespad=0.5, fontsize=6.3,
-              frameon=True, framealpha=0.92)
+              handletextpad=0.35, borderaxespad=0.5, fontsize=7,
+              frameon=True, framealpha=0.85)
 
     fig.subplots_adjust(left=0.085, right=0.93, top=0.97, bottom=0.13)
     _emit_pdf(
@@ -1377,8 +1398,7 @@ def _load_all_tiers_aggregated(output_dir):
     """Load all runs across all tiers, aggregate base models across seeds.
 
     Mirrors :func:`_load_tier1_aggregated` but keeps the tier axis. Restricted
-    to base-size models (``size_tag == "M"``) so the tier curves stay legible
-    — same convention as :func:`generate_tier_heatmap`.
+    to base-size models (``size_tag == "M"``) so the tier curves stay legible.
 
     Returns
     -------
@@ -1479,6 +1499,8 @@ def generate_tier_robustness(output_dir, *, wandb_run=None):
     ax.set_xlabel("Difficulty tier")
     ax.set_ylabel("Accuracy")
     ax.grid(True, alpha=0.3, linewidth=0.4)
+    ax.set_axisbelow(True)
+    _remove_chartjunk(ax)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
@@ -1533,23 +1555,25 @@ def generate_tier_grid(output_dir, *, wandb_run=None):
 
         ax.fill_between(x, y - yerr, y + yerr, color=color, alpha=0.20, linewidth=0)
         ax.plot(x, y, color=color, marker=marker, linestyle=ls,
-                markersize=3.4, linewidth=1.0,
+                markersize=4, linewidth=1.2,
                 markeredgecolor="white", markeredgewidth=0.3)
 
         ax.set_ylim(ymin, ymax)
         ax.set_xticks(tiers)
         ax.set_xticklabels([f"T{t}" for t in tiers])
         ax.set_title(family, color=color, pad=2, fontsize=8)
-        ax.grid(True, alpha=0.3, linewidth=0.3)
-        ax.tick_params(labelsize=6)
+        ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        _remove_chartjunk(ax)
+        ax.tick_params(labelsize=7)
 
     for ax in axes.flat[len(families):n_panels]:
         ax.set_visible(False)
 
     legend_frac = legend_h / figsize[1]
     fig.supxlabel("Difficulty tier", fontsize=8, y=legend_frac + 0.02)
-    fig.supylabel("Accuracy", fontsize=8, x=0.005)
-    fig.subplots_adjust(left=0.06, right=0.99,
+    fig.supylabel("Accuracy", fontsize=8, x=0.02)
+    fig.subplots_adjust(left=0.08, right=0.99,
                         top=1.0 - (0.06 * fig_h / figsize[1]),
                         bottom=legend_frac + 0.08,
                         wspace=0.12, hspace=0.40)
@@ -1617,6 +1641,8 @@ def generate_tier6_domain_gap(output_dir, *, wandb_run=None):
     ax.set_xlabel("Evaluation domain")
     ax.set_ylabel("Accuracy")
     ax.grid(True, alpha=0.3, linewidth=0.4, axis="y")
+    ax.set_axisbelow(True)
+    _remove_chartjunk(ax)
     ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.22),
               ncol=3, columnspacing=0.8, handletextpad=0.3,
               borderaxespad=0)
@@ -1629,59 +1655,6 @@ def generate_tier6_domain_gap(output_dir, *, wandb_run=None):
     )
 
 
-def generate_tier_heatmap(output_dir, *, wandb_run=None):
-    """Single-column heatmap of accuracy across tiers (base models only).
-
-    When ``wandb_run`` is provided, the figure is also logged to W&B
-    under the media key ``figures/tier/heatmap``.
-    """
-    apply_publication_style()
-    runs_dir = Path(output_dir) / "runs"
-    figures_dir = Path(output_dir) / "figures"
-    figures_dir.mkdir(parents=True, exist_ok=True)
-
-    results = []
-    for jf in sorted(runs_dir.glob("*.json")):
-        with open(jf) as f:
-            results.append(json.load(f))
-    if not results:
-        return
-
-    df = pd.DataFrame(results)
-    if "model_size_tag" not in df.columns:
-        df["model_size_tag"] = df["model_name"].apply(infer_size_tag)
-
-    # Restrict to base models (size tag = "M") to keep the heatmap legible
-    base = df[df["model_size_tag"] == "M"]
-    if base.empty:
-        print("No base models for tier heatmap.")
-        return
-
-    pivot = base.groupby(["model_name", "tier"])["accuracy"].mean().unstack("tier")
-    if pivot.empty or pivot.shape[1] < 2:
-        return
-    pivot = pivot.reindex(sorted(pivot.index))
-
-    vmin = max(0.50, float(pivot.min().min()) - 0.05)
-    fig, ax = plt.subplots(figsize=FIG_SINGLE)
-    sns.heatmap(pivot, annot=True, fmt=".2f", cmap="YlGnBu",
-                vmin=vmin, vmax=1.0,
-                cbar_kws={"label": "Accuracy", "shrink": 0.85,
-                          "pad": 0.02},
-                annot_kws={"size": 6.5},
-                linewidths=0.3, linecolor="white",
-                ax=ax)
-    ax.set_xlabel("Tier")
-    ax.set_ylabel("")
-    ax.set_xticklabels([f"T{int(t)}" for t in pivot.columns], rotation=0)
-    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
-    fig.subplots_adjust(left=0.32, right=0.94, top=0.96, bottom=0.18)
-    _emit_pdf(
-        fig, figures_dir, "tier_heatmap.pdf",
-        wandb_run=wandb_run,
-        wandb_key="figures/tier/heatmap",
-        caption="Tier heatmap: base models x tiers",
-    )
 
 
 # ──────────────────────────────────────────────
@@ -1764,12 +1737,10 @@ def regenerate_and_publish_figures(args, summary_df=None, *, wandb_publish=True)
             },
         )
     try:
-        # Diagnostic PNGs — kept W&B-free (they're debug artefacts, not
-        # publication figures) per doc/variant_plotting.md §8.5.
-        generate_plots(args.output_dir)
+        # Diagnostic PDFs (confusion matrices, F1 heatmap, seed boxplot).
+        generate_plots(args.output_dir, wandb_run=run)
 
         # Tier-axis figures (no --scaling dependency)
-        generate_tier_heatmap(args.output_dir, wandb_run=run)
         generate_tier_robustness(args.output_dir, wandb_run=run)
         generate_tier_grid(args.output_dir, wandb_run=run)
         generate_tier6_domain_gap(args.output_dir, wandb_run=run)

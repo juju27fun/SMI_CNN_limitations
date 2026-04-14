@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import seaborn as sns
 import matplotlib.pyplot as plt
 
 from torch.utils.data import Dataset, DataLoader
@@ -323,15 +322,12 @@ def run_training(args, device, class_names, train_loader, val_loader, test_loade
     print("\nConfusion Matrix:")
     print(confusion_matrix(y_true, y_pred))
 
-    # Save the confusion matrix using seaborn heatmap
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(confusion_matrix(y_true, y_pred), annot=True, fmt="d", cmap="Blues",
-                xticklabels=class_names, yticklabels=class_names)
-    plt.xlabel("Predicted")
-    plt.ylabel("True")
-    plt.title("Confusion Matrix")
-    plt.savefig(output_dir / "confusion_matrix.png")
-    plt.close()
+    # Save the confusion matrix — Blues + LogNorm (centralised in pub_utils)
+    from pub_utils import plot_confusion_matrix
+    cm = confusion_matrix(y_true, y_pred)
+    fig_cm, _ = plot_confusion_matrix(cm, class_names)
+    fig_cm.savefig(output_dir / "confusion_matrix.pdf")
+    plt.close(fig_cm)
 
     # Figure for train loss, val loss and val acc
     plt.figure(figsize=(18, 5))
