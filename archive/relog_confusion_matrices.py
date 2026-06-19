@@ -33,7 +33,7 @@ from models import Conv1DClassifier
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-from pub_utils import plot_confusion_matrix
+from pub_utils import plot_confusion_matrix, PUB_RC
 
 RUNS = {
     "3c": {
@@ -43,7 +43,7 @@ RUNS = {
         "data_dir": _PROJECT_ROOT / "data" / "dataset" / "test",
         "n_classes": 3,
         "class_names": ["2um", "4um", "10um"],
-        "keys": ["Charts/confusion_matrix"],
+        "keys": ["Charts/confusion_matrix_v2"],
     },
     "4c": {
         "run_id": "aqdat939",
@@ -52,7 +52,16 @@ RUNS = {
         "data_dir": _PROJECT_ROOT / "data" / "dataset_4c" / "test",
         "n_classes": 4,
         "class_names": ["2um", "4um", "10um", "Noise"],
-        "keys": ["Charts/confusion_matrix", "Charts_3class/confusion_matrix"],
+        "keys": ["Charts/confusion_matrix_v2", "Charts_3class/confusion_matrix_v2"],
+    },
+    "S_union": {
+        "run_id": "2eyj3qm1",
+        "run_name": "Conv1D-S_union-run1",
+        "model_path": _PROJECT_ROOT / "output" / "Conv1D-S_union-run1" / "best_model.pth",
+        "data_dir": _PROJECT_ROOT / "data" / "S_union" / "test",
+        "n_classes": 3,
+        "class_names": ["2um", "4um", "10um"],
+        "keys": ["Charts/confusion_matrix_v2"],
     },
 }
 
@@ -116,7 +125,7 @@ def process_run(run_key, device):
     for i, key in enumerate(cfg["keys"]):
         is_last = (i == len(cfg["keys"]) - 1)
 
-        if key == "Charts_3class/confusion_matrix":
+        if "Charts_3class" in key:
             # 3-class subset: filter to particle classes only (exclude Noise = class 3)
             particle_mask = y_true < 3
             y_true_3c = y_true[particle_mask]
@@ -145,7 +154,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
-    for run_key in ["3c", "4c"]:
+    for run_key in ["3c", "4c", "S_union"]:
         process_run(run_key, device)
 
     print("\nAll confusion matrices re-logged successfully.")

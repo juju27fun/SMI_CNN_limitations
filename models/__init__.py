@@ -8,26 +8,25 @@ Every model exposes a `feature_layer` attribute (penultimate Linear) for
 hook-based feature extraction in the training pipeline.
 """
 
-from models.conv1d import Conv1DClassifier
 from models.conv1d_gap import Conv1DGAPClassifier
-from models.lenet1d import LeNet1D
-from models.vgg1d import VGG1D
+from models.convnext1d import ConvNeXt1D
 from models.resnet1d import ResNet1D
 from models.inception1d import InceptionTime1D
 from models.mobilenet1d import MobileNet1D
 from models.efficientnet1d import EfficientNet1D
 from models.densenet1d import DenseNet1D
+from models.transformer1d_classifiers import PatchTSTClassifier, Swin1DClassifier
 
 MODEL_REGISTRY = {
-    "Conv1D": Conv1DClassifier,
     "Conv1DGAP": Conv1DGAPClassifier,
-    "LeNet1D": LeNet1D,
-    "VGG1D": VGG1D,
+    "ConvNeXt1D": ConvNeXt1D,
     "ResNet1D": ResNet1D,
     "InceptionTime1D": InceptionTime1D,
     "MobileNet1D": MobileNet1D,
     "EfficientNet1D": EfficientNet1D,
     "DenseNet1D": DenseNet1D,
+    "Swin1D": Swin1DClassifier,
+    "PatchTST": PatchTSTClassifier,
 }
 
 # Scaling variants for accuracy-vs-capacity curves.
@@ -35,17 +34,9 @@ MODEL_REGISTRY = {
 # "M" (base) entries use {} so default constructor args are preserved.
 # Suffixes (smallest -> largest): -Pico, -Nano, -XXS, -XS, -S, (M = no suffix), -L
 MODEL_VARIANTS = {
-    # Conv1D family (width_mult: default=1.0)
-    "Conv1D-Pico":       (Conv1DClassifier, {"width_mult": 0.0125}),
-    "Conv1D-Nano":       (Conv1DClassifier, {"width_mult": 0.025}),
-    "Conv1D-XXS":        (Conv1DClassifier, {"width_mult": 0.1}),
-    "Conv1D-XS":         (Conv1DClassifier, {"width_mult": 0.25}),
-    "Conv1D-S":          (Conv1DClassifier, {"width_mult": 0.5}),
-    "Conv1D":            (Conv1DClassifier, {}),
-    "Conv1D-L":          (Conv1DClassifier, {"width_mult": 2.0}),
-    # Conv1DGAP family (width_mult: default=1.0) — same backbone as Conv1D
-    # but with Global Average Pooling instead of flatten, yielding a much
-    # smaller FC head.
+    # Conv1DGAP family (width_mult: default=1.0) — Conv1D backbone with
+    # Global Average Pooling instead of flatten, yielding a much smaller
+    # FC head and input-length agnostic inference.
     "Conv1DGAP-Pico":    (Conv1DGAPClassifier, {"width_mult": 0.0125}),
     "Conv1DGAP-Nano":    (Conv1DGAPClassifier, {"width_mult": 0.025}),
     "Conv1DGAP-XXS":     (Conv1DGAPClassifier, {"width_mult": 0.1}),
@@ -53,22 +44,13 @@ MODEL_VARIANTS = {
     "Conv1DGAP-S":       (Conv1DGAPClassifier, {"width_mult": 0.5}),
     "Conv1DGAP":         (Conv1DGAPClassifier, {}),
     "Conv1DGAP-L":       (Conv1DGAPClassifier, {"width_mult": 2.0}),
-    # LeNet1D family (width_mult: default=1.0)
-    "LeNet1D-Pico":      (LeNet1D, {"width_mult": 0.01}),
-    "LeNet1D-Nano":      (LeNet1D, {"width_mult": 0.025}),
-    "LeNet1D-XXS":       (LeNet1D, {"width_mult": 0.1}),
-    "LeNet1D-XS":        (LeNet1D, {"width_mult": 0.25}),
-    "LeNet1D-S":         (LeNet1D, {"width_mult": 0.5}),
-    "LeNet1D":           (LeNet1D, {}),
-    "LeNet1D-L":         (LeNet1D, {"width_mult": 2.0}),
-    # VGG1D family (width_mult: default=1.0)
-    "VGG1D-Pico":        (VGG1D, {"width_mult": 0.0125}),
-    "VGG1D-Nano":        (VGG1D, {"width_mult": 0.025}),
-    "VGG1D-XXS":         (VGG1D, {"width_mult": 0.1}),
-    "VGG1D-XS":          (VGG1D, {"width_mult": 0.25}),
-    "VGG1D-S":           (VGG1D, {"width_mult": 0.5}),
-    "VGG1D":             (VGG1D, {}),
-    "VGG1D-L":           (VGG1D, {"width_mult": 2.0}),
+    # ConvNeXt1D family (base_dim: default=42)
+    "ConvNeXt1D-Nano":   (ConvNeXt1D, {"base_dim": 2}),
+    "ConvNeXt1D-XXS":    (ConvNeXt1D, {"base_dim": 5}),
+    "ConvNeXt1D-XS":     (ConvNeXt1D, {"base_dim": 10}),
+    "ConvNeXt1D-S":      (ConvNeXt1D, {"base_dim": 21}),
+    "ConvNeXt1D":        (ConvNeXt1D, {}),
+    "ConvNeXt1D-L":      (ConvNeXt1D, {"base_dim": 84}),
     # ResNet1D family (base_width: default=74)
     "ResNet1D-Nano":     (ResNet1D, {"base_width": 2}),
     "ResNet1D-XXS":      (ResNet1D, {"base_width": 7}),
@@ -104,6 +86,9 @@ MODEL_VARIANTS = {
     "DenseNet1D-S":      (DenseNet1D, {"growth_rate": 20, "init_channels": 32}),
     "DenseNet1D":        (DenseNet1D, {}),
     "DenseNet1D-L":      (DenseNet1D, {"growth_rate": 80, "init_channels": 128}),
+    # Transformer families imported from P1 backbones.
+    "Swin1D":            (Swin1DClassifier, {}),
+    "PatchTST":          (PatchTSTClassifier, {}),
 }
 
 # Auto-build family map by stripping size suffix

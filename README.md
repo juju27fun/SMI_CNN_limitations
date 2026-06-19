@@ -1,3 +1,9 @@
+# P0 - Supervised Classification Baselines
+
+P0 contains the supervised 1D classification baselines, dataset generation utilities, noise/background data, and historical benchmark outputs used by the later P1/P2/P3 projects.
+
+The project has been reorganized into the importable `p0` package plus `scripts/`, `docs/`, `data/`, and `outputs/`. Former high-use commands such as `python train4classes.py` are kept as root wrappers for compatibility, while reusable code should be imported from `p0.*`.
+
 # Create a virtual environment
 ```bash
 python -m venv venv
@@ -7,6 +13,7 @@ source venv/bin/activate
 # Install requirements
 ```bash
 python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 # Notebook

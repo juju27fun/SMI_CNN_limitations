@@ -17,26 +17,27 @@ class Conv1DGAPClassifier(nn.Module):
     """1D Convolutional classifier with Global Average Pooling head."""
 
     def __init__(self, input_length: int = 250, num_classes: int = 3, dropout: float = 0.2,
-                 width_mult: float = 1.0):
+                 width_mult: float = 1.0, kernel_size: int = 5):
         super(Conv1DGAPClassifier, self).__init__()
 
         c1 = max(1, int(64 * width_mult))
         c2 = max(1, int(128 * width_mult))
         c3 = max(1, int(256 * width_mult))
         fc_hidden = max(1, int(256 * width_mult))
+        pad = kernel_size // 2
 
         # Conv1D layers with increasing channels and max pooling to reduce sequence length
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=c1, kernel_size=5, padding=2)
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=c1, kernel_size=kernel_size, padding=pad)
         self.bn1 = nn.BatchNorm1d(c1)
         self.pool1 = nn.MaxPool1d(kernel_size=2)
         self.drop1 = nn.Dropout(dropout)
 
-        self.conv2 = nn.Conv1d(in_channels=c1, out_channels=c2, kernel_size=5, padding=2)
+        self.conv2 = nn.Conv1d(in_channels=c1, out_channels=c2, kernel_size=kernel_size, padding=pad)
         self.bn2 = nn.BatchNorm1d(c2)
         self.pool2 = nn.MaxPool1d(kernel_size=2)
         self.drop2 = nn.Dropout(dropout)
 
-        self.conv3 = nn.Conv1d(in_channels=c2, out_channels=c3, kernel_size=5, padding=2)
+        self.conv3 = nn.Conv1d(in_channels=c2, out_channels=c3, kernel_size=kernel_size, padding=pad)
         self.bn3 = nn.BatchNorm1d(c3)
         self.pool3 = nn.MaxPool1d(kernel_size=2)
         self.drop3 = nn.Dropout(dropout)

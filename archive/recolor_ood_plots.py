@@ -148,6 +148,14 @@ def generate_and_log_plots(run, model, test_loader, noise_loader, train_loader,
 
     # ── 1) Score histograms (4 methods) ──
     print("    Generating histograms...")
+    plt.rcParams.update({
+        "pdf.fonttype": 42, "ps.fonttype": 42,
+        "savefig.dpi": 300, "savefig.bbox": "standard",
+        "font.family": "serif", "font.size": 8,
+        "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7,
+        "legend.fontsize": 7,
+    })
+
     hist_configs = [
         ("MSP", msp_id, msp_noise, "Max Softmax Probability", "msp"),
         ("Energy", energy_id, energy_noise, "Energy Score (-logsumexp)", "energy"),
@@ -157,15 +165,19 @@ def generate_and_log_plots(run, model, test_loader, noise_loader, train_loader,
 
     for label, id_vals, noise_vals, xlabel, key in hist_configs:
         m = methods[label]
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(3.39, 2.10))
         ax.hist(id_vals, bins=_safe_bins(id_vals), alpha=0.6,
-                label=f"In-dist (n={n_id})", color=COLOR_ID, density=True)
+                label=f"In-dist (n={n_id})", color="#0072B2", density=True)
         ax.hist(noise_vals, bins=_safe_bins(noise_vals), alpha=0.6,
-                label=f"Noise (n={n_noise})", color=COLOR_NOISE, density=True)
+                label=f"Noise (n={n_noise})", color="#D55E00", density=True)
         ax.set_xlabel(xlabel)
         ax.set_ylabel("Density")
-        ax.set_title(f"{label} Distribution (AUROC={m['auroc']:.3f})")
-        ax.legend()
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        ax.legend(frameon=False)
+        fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
         run.log({f"noise_ood/{key}_histogram": wandb.Image(fig)}, commit=False)
         plt.close(fig)
 
@@ -173,15 +185,20 @@ def generate_and_log_plots(run, model, test_loader, noise_loader, train_loader,
     noise_class_counts = np.bincount(noise_preds, minlength=len(class_names))
     noise_class_pcts = noise_class_counts / n_noise * 100
 
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(3.39, 2.10))
     bars = ax.bar(class_names, noise_class_pcts,
-                  color=BAR_COLORS[:len(class_names)], edgecolor="white")
+                  color=["#0072B2", "#E69F00", "#009E73"][:len(class_names)],
+                  edgecolor="white")
     for bar, pct in zip(bars, noise_class_pcts):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
-                f"{pct:.1f}%", ha="center", fontsize=10)
+                f"{pct:.1f}%", ha="center", fontsize=8)
     ax.set_ylabel("% of noise samples")
-    ax.set_title(f"Model predictions on noise (n={n_noise})")
     ax.set_ylim(0, max(noise_class_pcts) * 1.2 if max(noise_class_pcts) > 0 else 100)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(True, alpha=0.3, linewidth=0.4)
+    ax.set_axisbelow(True)
+    fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
     run.log({"noise_ood/prediction_distribution": wandb.Image(fig)}, commit=False)
     plt.close(fig)
 
@@ -237,15 +254,19 @@ def generate_and_log_plots(run, model, test_loader, noise_loader, train_loader,
         }
         et = methods["Energy_tuned"]
 
-        fig, ax = plt.subplots(figsize=(8, 5))
+        fig, ax = plt.subplots(figsize=(3.39, 2.10))
         ax.hist(energy_tuned_id, bins=_safe_bins(energy_tuned_id), alpha=0.6,
-                label=f"In-dist (n={n_id})", color=COLOR_ID, density=True)
+                label=f"In-dist (n={n_id})", color="#0072B2", density=True)
         ax.hist(energy_tuned_noise, bins=_safe_bins(energy_tuned_noise), alpha=0.6,
-                label=f"Noise (n={n_noise})", color=COLOR_NOISE, density=True)
+                label=f"Noise (n={n_noise})", color="#D55E00", density=True)
         ax.set_xlabel(f"Energy Score (T={best_T_energy})")
         ax.set_ylabel("Density")
-        ax.set_title(f"Energy Tuned Distribution (AUROC={et['auroc']:.3f})")
-        ax.legend()
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.grid(True, alpha=0.3, linewidth=0.4)
+        ax.set_axisbelow(True)
+        ax.legend(frameon=False)
+        fig.subplots_adjust(left=0.18, right=0.96, top=0.96, bottom=0.22)
         run.log({"noise_ood/energy_tuned_histogram": wandb.Image(fig)}, commit=False)
         plt.close(fig)
 

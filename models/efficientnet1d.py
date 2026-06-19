@@ -82,7 +82,7 @@ class EfficientNet1D(nn.Module):
     """EfficientNet-B0 style 1D classifier."""
 
     def __init__(self, input_length: int = 625, num_classes: int = 4, dropout: float = 0.2,
-                 width_mult: float = 0.85, head_ch: int = None):
+                 width_mult: float = 0.85, head_ch: int = None, kernel_size: int = None):
         super().__init__()
 
         # Block configs: [expand_ratio, out_channels, num_blocks, stride, kernel_size]
@@ -96,10 +96,19 @@ class EfficientNet1D(nn.Module):
             [6, 320, 1, 1, 3],
         ]
 
+        # Uniform kernel override: replace every per-block `k` by `kernel_size`
+        # AND the stem kernel below. `None` preserves default B0 kernels (3/5).
+        if kernel_size is not None:
+            for c in configs:
+                c[4] = kernel_size
+            stem_k = kernel_size
+        else:
+            stem_k = 3
+
         # Stem
         stem_ch = _make_divisible(32 * width_mult)
         self.stem = nn.Sequential(
-            nn.Conv1d(1, stem_ch, 3, stride=2, padding=1, bias=False),
+            nn.Conv1d(1, stem_ch, stem_k, stride=2, padding=stem_k // 2, bias=False),
             nn.BatchNorm1d(stem_ch),
             nn.SiLU(inplace=True),
         )

@@ -13,11 +13,12 @@ class BasicBlock1D(nn.Module):
     """Basic residual block: two Conv1d(3) with skip connection."""
     expansion = 1
 
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None, kernel_size: int = 3):
         super().__init__()
-        self.conv1 = nn.Conv1d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
+        pad = kernel_size // 2
+        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=pad, bias=False)
         self.bn1 = nn.BatchNorm1d(out_channels)
-        self.conv2 = nn.Conv1d(out_channels, out_channels, 3, padding=1, bias=False)
+        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size, padding=pad, bias=False)
         self.bn2 = nn.BatchNorm1d(out_channels)
         self.downsample = downsample
 
@@ -35,12 +36,14 @@ class ResNet1D(nn.Module):
     """ResNet-18 style 1D classifier."""
 
     def __init__(self, input_length: int = 625, num_classes: int = 4, dropout: float = 0.2,
-                 base_width: int = 74):
+                 base_width: int = 74, kernel_size: int = 3):
         super().__init__()
         w = base_width
+        self.kernel_size = kernel_size
+        stem_pad = kernel_size // 2
 
-        # Stem
-        self.conv1 = nn.Conv1d(1, w, kernel_size=7, stride=2, padding=3, bias=False)
+        # Stem — uniform kernel (replaces default 7 when kernel_size is swept)
+        self.conv1 = nn.Conv1d(1, w, kernel_size=kernel_size, stride=2, padding=stem_pad, bias=False)
         self.bn1 = nn.BatchNorm1d(w)
         self.pool = nn.MaxPool1d(3, stride=2, padding=1)
 
@@ -63,9 +66,10 @@ class ResNet1D(nn.Module):
                 nn.Conv1d(in_channels, out_channels, 1, stride=stride, bias=False),
                 nn.BatchNorm1d(out_channels),
             )
-        layers = [BasicBlock1D(in_channels, out_channels, stride, downsample)]
+        k = self.kernel_size
+        layers = [BasicBlock1D(in_channels, out_channels, stride, downsample, kernel_size=k)]
         for _ in range(1, num_blocks):
-            layers.append(BasicBlock1D(out_channels, out_channels))
+            layers.append(BasicBlock1D(out_channels, out_channels, kernel_size=k))
         return nn.Sequential(*layers)
 
     def forward(self, x):

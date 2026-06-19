@@ -149,32 +149,42 @@ def log_distance_matrix(run, mat, dataset_name):
             key = f"cluster_distances/cosine_{CLUSTER_NAMES[i].lower()}_vs_{CLUSTER_NAMES[j].lower()}"
             run.summary[key] = round(float(mat[i, j]), 4)
 
-    # ── Heatmap (full symmetric, annotated) ──
-    display = mat.copy()
-    masked = np.ma.array(display, mask=np.isnan(display))
+    # ── Heatmap (lower-triangular, diagonal visible) ──
+    plt.rcParams.update({
+        "pdf.fonttype": 42, "ps.fonttype": 42,
+        "savefig.dpi": 300, "savefig.bbox": "standard",
+        "font.family": "serif", "font.size": 8,
+        "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7,
+    })
 
-    fig, ax = plt.subplots(figsize=(6, 5))
-    cmap = plt.cm.YlOrRd.copy()
+    mask = np.triu(np.ones_like(mat, dtype=bool), k=1)
+    display = mat.copy()
+    display[mask] = np.nan
+
+    COL_W = 3.39
+    fig, ax = plt.subplots(figsize=(COL_W, COL_W))
+    cmap = plt.get_cmap("YlGnBu").copy()
     cmap.set_bad("white")
 
-    im = ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="auto")
-    plt.colorbar(im, ax=ax, label="Cosine distance")
+    im = ax.imshow(display, cmap=cmap, vmin=0, aspect="equal")
+    plt.colorbar(im, ax=ax, label="Cosine distance", shrink=0.85)
 
     ax.set_xticks(range(n))
     ax.set_yticks(range(n))
     ax.set_xticklabels(CLUSTER_NAMES, rotation=45, ha="right")
     ax.set_yticklabels(CLUSTER_NAMES)
-    ax.set_title(f"Cluster Cosine Distances — {dataset_name}")
 
+    # Annotate only lower triangle + diagonal
     for i in range(n):
-        for j in range(n):
-            val = display[i, j]
-            if not np.isnan(val):
-                text_color = "white" if val > 0.55 else "black"
-                ax.text(j, i, f"{val:.3f}", ha="center", va="center",
-                        fontsize=9, color=text_color)
+        for j in range(i + 1):
+            val = mat[i, j]
+            rgba = cmap(im.norm(val)) if val > 0 else (1, 1, 1, 1)
+            lum = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
+            txt_color = "white" if lum < 0.45 else "black"
+            ax.text(j, i, f"{val:.3f}", ha="center", va="center",
+                    fontsize=8, color=txt_color)
 
-    fig.tight_layout()
+    fig.subplots_adjust(left=0.22, right=0.92, top=0.96, bottom=0.18)
     run.log({"cluster_distances/cosine_distance_heatmap": wandb.Image(fig)}, commit=False)
     plt.close(fig)
     print("  Logged table and heatmap to W&B")

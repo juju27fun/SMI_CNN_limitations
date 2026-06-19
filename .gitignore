@@ -8,17 +8,33 @@ data/
 venv/
 .venv/
 __pycache__/
+**/__pycache__/
 *.pyc
+.pytest_cache/
 
 # Training outputs
 output/
+output
+outputs/
+outputs
+results/
+results
+artifacts/
+artifacts
+logs/
+logs
 
 # Weights & Biases
 wandb/
+wandb
 .netrc
 
 # Reports
 *_full_analysis/
 *_Noise_Analysis.pdf
 audit_results/
+audit_results
 audit_manifest.json
+
+# Root raw-data compatibility symlinks
+C1_HF_5_10_*

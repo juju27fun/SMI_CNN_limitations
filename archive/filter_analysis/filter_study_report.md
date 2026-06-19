@@ -2,6 +2,8 @@
 
 ## Objective
 
+Historical checkpoints, plots, and generated JSON outputs from this study are intentionally not kept in source control. If they are needed for local inspection, place them under the ignored `outputs/legacy/filter_study_outputs/` path or retrieve them from external artifact storage.
+
 Determine which combination of the 3 bandpass filters yields the best
 classification accuracy for the Conv1D particle classifier.
 
