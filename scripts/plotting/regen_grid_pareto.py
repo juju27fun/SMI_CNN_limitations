@@ -49,16 +49,14 @@ for mod_name in ["wandb", "torchinfo", "torchsummary"]:
         m.summary = lambda *a, **kw: None
         sys.modules[mod_name] = m
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from benchmark_zoo import (
+from p0.benchmarking import (
     generate_scaling_grid,
     generate_pareto_publication,
     generate_pareto_latency_focus,
     generate_tier_grid,
 )
 
-OUTPUT_DIR = "results/benchmark2"
+OUTPUT_DIR = "artifacts/SMI_CNN_limitations/benchmark2"
 
 generate_scaling_grid(OUTPUT_DIR, x_col="macs", x_label="MACs",
                       fname="scaling_grid.pdf")

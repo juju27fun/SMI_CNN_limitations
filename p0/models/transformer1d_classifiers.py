@@ -1,4 +1,4 @@
-"""Classifier wrappers for P1 transformer backbones.
+"""Classifier wrappers for the installed ``detseg`` transformer backbones.
 
 The P1 Swin/PatchTST implementations expose a detection-backbone contract:
 ``forward(x) -> list[(B, C, T_i)]``.  P0 expects a classifier contract:
@@ -10,21 +10,14 @@ adapt only the final pooling/classification head for P0 experiments.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-_P1_ROOT = Path(__file__).resolve().parents[2] / "P1"
-if str(_P1_ROOT) not in sys.path:
-    sys.path.insert(0, str(_P1_ROOT))
-
-from detseg.models.backbones.patchtst1d import PatchTST1DBackbone  # noqa: E402
-from detseg.models.backbones.patchtst_pretrained import PatchTSTPretrained1DBackbone  # noqa: E402
-from detseg.models.backbones.swin1d import Swin1DBackbone  # noqa: E402
+from detseg.models.backbones.patchtst1d import PatchTST1DBackbone
+from detseg.models.backbones.patchtst_pretrained import PatchTSTPretrained1DBackbone
+from detseg.models.backbones.swin1d import Swin1DBackbone
 
 
 class _PyramidBackboneClassifier(nn.Module):

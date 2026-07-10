@@ -17,17 +17,15 @@ import matplotlib
 matplotlib.use("Agg")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.benchmarks import benchmark_zoo as bz  # noqa: E402
-from scripts.plotting import plot_doublet_comparison as doublet_cmp  # noqa: E402
-from scripts.plotting import plot_realtime_factor_doublet as doublet_rt  # noqa: E402
+from p0 import benchmarking as bz  # noqa: E402
+from p0 import plot_doublet_comparison as doublet_cmp  # noqa: E402
+from p0 import plot_realtime_factor_doublet as doublet_rt  # noqa: E402
 
 
 TRANSFORMER_FAMILIES = {"PatchTST", "Swin1D"}
-BENCHMARK2_DIR = PROJECT_ROOT / "outputs/benchmarks/results/benchmark2"
-DOUBLET_DIR = PROJECT_ROOT / "outputs/benchmarks/results/doublet_3fam_retrained"
+BENCHMARK2_DIR = PROJECT_ROOT.parent / "artifacts/SMI_CNN_limitations/benchmarks/benchmark2"
+DOUBLET_DIR = PROJECT_ROOT.parent / "artifacts/SMI_CNN_limitations/benchmarks/doublet_3fam_retrained"
 CNN_DOUBLET_FAMILIES = ["EfficientNet1D", "ResNet1D", "Conv1DGAP"]
 WITH_TRANSFORMER_DOUBLET_FAMILIES = [
     "Swin1D",

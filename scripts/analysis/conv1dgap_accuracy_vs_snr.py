@@ -14,7 +14,6 @@ import csv
 import json
 import math
 import os
-import sys
 from collections import Counter, defaultdict
 
 import matplotlib
@@ -22,10 +21,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-
-P0_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if P0_ROOT not in sys.path:
-    sys.path.insert(0, P0_ROOT)
 
 KEY_COLUMNS = ("filename", "path", "sample_id")
 TRUE_COLUMNS = ("y_true", "true_class", "label", "class")
@@ -425,7 +420,7 @@ def main():
                         default=True)
     parser.add_argument("--snr-csv", default=None,
                         help="Optional particles2SNR snr_particles.csv for joining snr_db by filename")
-    parser.add_argument("--output-dir", default="results/snr_accuracy")
+    parser.add_argument("--output-dir", default="artifacts/SMI_CNN_limitations/snr_accuracy")
     parser.add_argument("--bins", type=int, default=8)
     parser.add_argument("--bin-width", type=float, default=None,
                         help="Use fixed-width SNR bins instead of quantile bins")

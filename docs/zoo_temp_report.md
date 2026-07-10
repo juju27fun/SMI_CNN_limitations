@@ -2,7 +2,7 @@
 
 > Companion to `benchmark_zoo.py` (Benchmark 2). Covers the 9 architectures
 > evaluated, their justification, and a full **Materials & Methods** section
-> describing every figure emitted under `results/benchmark2/figures/`.
+> describing every figure emitted under `artifacts/SMI_CNN_limitations/benchmarks/benchmark2/figures/`.
 
 > **Recent updates (2026-04-08):**
 >
@@ -97,7 +97,7 @@ scaling and Pareto figures below are meant to expose.
 
 All 58 models actually trained in the sweep, with their measured parameter
 count and MACs (single forward pass at `input_length = 625`, taken from
-`results/benchmark2/summary.csv`). Suffixes are ordered smallest → largest:
+`artifacts/SMI_CNN_limitations/benchmarks/benchmark2/summary.csv`). Suffixes are ordered smallest → largest:
 **Pico < Nano < XXS < XS < S < M (no suffix) < L**. Conv1D / Conv1DGAP /
 LeNet1D / VGG1D expose a Pico tier; the other five families bottom out at
 Nano because their architectural minimums (a single residual block, a
@@ -177,7 +177,7 @@ the same tier) are directly readable from the two blocks above.
 
 ### 2.1 — Dataset and preprocessing
 
-Primary dataset: `data/dataset` (3 classes: `2um`, `4um`, `10um`), split
+Primary dataset: `datasets/processed/p0-baseline-3class/v1` (3 classes: `2um`, `4um`, `10um`), split
 on disk into `train/` and `test/`. Each signal is a 2500-sample raw trace
 from the self-mixing optical sensor.
 
@@ -205,7 +205,7 @@ Tier definitions (`create_tier_loaders`, `benchmark_zoo.py:255`):
 | 3    | full       | Gaussian noise, SNR = 10 dB   | noise robustness                      |
 | 4    | 50/class   | Gaussian noise, SNR = 10 dB   | small-data × noise                    |
 | 5    | 20/class   | Real noise ∈ [−3, 3] dB + 15 % time mask | worst-case field deployment |
-| 6    | full synth | base only                     | sim-to-real domain shift (test on `data/S7_pure_real`) |
+| 6    | full synth | base only                     | sim-to-real domain shift (test on `datasets/processed/s7-pure-real/v1`) |
 
 ### 2.2 — Training protocol
 
@@ -262,12 +262,12 @@ Each subsection answers three questions:
 - **Why** — what claim the figure is meant to support.
 - **How to interpret** — what a reader should look for.
 - **Compute & data** — exactly how the figure is assembled from the
-  per-run JSONs under `results/benchmark2/runs/`.
+  per-run JSONs under `artifacts/SMI_CNN_limitations/benchmarks/benchmark2/runs/`.
 
 All PDFs use the publication `rcParams` declared at `benchmark_zoo.py:151`
 (7 pt labels, 1.2 pt lines, TrueType fonts, fixed canvas size so no
 `bbox="tight"` rescaling happens). They are emitted to
-`results/benchmark2/figures/`, and simultaneously logged as `wandb.Image`
+`artifacts/SMI_CNN_limitations/benchmarks/benchmark2/figures/`, and simultaneously logged as `wandb.Image`
 previews to the consolidated `benchmark2-report-<timestamp>` W&B run plus
 bundled as a `benchmark2-report` artifact.
 

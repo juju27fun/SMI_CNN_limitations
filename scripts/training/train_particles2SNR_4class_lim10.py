@@ -219,10 +219,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train Conv1DGAP/zoo models on particles2SNR_4_class_lim10."
     )
-    add_common_training_args(parser, data_dir_default="P0/data/particles2SNR_4_class_lim10")
+    add_common_training_args(parser, data_dir_default="datasets/processed/particles2snr-4class-lim10/v1")
     parser.set_defaults(
         model="Conv1DGAP-L",
-        output_dir="P0/results/particles2SNR_4_class_lim10_conv1dgap",
+        output_dir="artifacts/SMI_CNN_limitations/particles2SNR_4_class_lim10_conv1dgap",
         optimizer="adamw",
         weight_decay=0.01,
     )

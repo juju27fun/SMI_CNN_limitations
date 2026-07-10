@@ -8,14 +8,14 @@ Every model exposes a `feature_layer` attribute (penultimate Linear) for
 hook-based feature extraction in the training pipeline.
 """
 
-from models.conv1d_gap import Conv1DGAPClassifier
-from models.convnext1d import ConvNeXt1D
-from models.resnet1d import ResNet1D
-from models.inception1d import InceptionTime1D
-from models.mobilenet1d import MobileNet1D
-from models.efficientnet1d import EfficientNet1D
-from models.densenet1d import DenseNet1D
-from models.transformer1d_classifiers import (
+from p0.models.conv1d_gap import Conv1DGAPClassifier
+from p0.models.convnext1d import ConvNeXt1D
+from p0.models.resnet1d import ResNet1D
+from p0.models.inception1d import InceptionTime1D
+from p0.models.mobilenet1d import MobileNet1D
+from p0.models.efficientnet1d import EfficientNet1D
+from p0.models.densenet1d import DenseNet1D
+from p0.models.transformer1d_classifiers import (
     PatchTSTClassifier,
     PatchTSTPretrainedClassifier,
     Swin1DClassifier,

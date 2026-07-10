@@ -13,16 +13,15 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-RETAINED_HELP_COMMANDS = (
-    "train.py",
-    "train4classes.py",
-    "benchmark_zoo.py",
-    "benchmark_base.py",
-    "generate_dataset.py",
-    "analyze_noise.py",
-    "dataset_leaks.py",
-    "fix_leaks.py",
-    "run_dataset_audit.py",
+GROUPED_HELP_COMMANDS = (
+    "scripts/training/train.py",
+    "scripts/training/train4classes.py",
+    "scripts/benchmarks/benchmark_zoo.py",
+    "scripts/benchmarks/benchmark_base.py",
+    "scripts/datasets/generate_dataset.py",
+    "scripts/analysis/analyze_noise.py",
+    "scripts/audit/dataset_leaks.py",
+    "scripts/audit/fix_leaks.py",
 )
 
 
@@ -47,8 +46,8 @@ def run_help(script: str):
     )
 
 
-def test_retained_cli_help_commands():
-    for script in RETAINED_HELP_COMMANDS:
+def test_grouped_cli_help_commands():
+    for script in GROUPED_HELP_COMMANDS:
         result = run_help(script)
         assert result.returncode == 0, (
             f"{script} --help failed\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"

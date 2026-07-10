@@ -64,7 +64,7 @@ def npy_metadata(path: Path, max_values: int) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--root", default="data", type=Path)
-    parser.add_argument("--out-dir", default=Path("audit_results/dataset_inventory"), type=Path)
+    parser.add_argument("--out-dir", default=Path("audit_artifacts/SMI_CNN_limitations/dataset_inventory"), type=Path)
     parser.add_argument("--max-values", default=2048, type=int)
     args = parser.parse_args()
 

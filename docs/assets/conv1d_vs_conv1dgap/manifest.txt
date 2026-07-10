@@ -1,0 +1,14 @@
+Conv1D vs Conv1DGAP presentation assets
+
+Architecture blocks: architecture_01_input.png through architecture_09_conv1dgap_total.png
+Parameter blocks: parameter_01_conv1d.png through parameter_03_takeaway.png
+Accuracy blocks: accuracy_01_conv1d.png through accuracy_03_takeaway.png
+Tables:
+  table_00_full_accuracy_params.png: full table
+  table_01_header.png: header only
+  table_02_conv1d_row.png: Conv1D row only
+  table_03_conv1dgap_row.png: Conv1DGAP row only
+  table_04_conv1d_with_header.png: Conv1D half-table
+  table_05_conv1dgap_with_header.png: Conv1DGAP half-table
+
+All PNGs use transparent backgrounds except the table body.

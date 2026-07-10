@@ -73,16 +73,16 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
   1. **Training set size** — reduce from 403 to {200, 100, 50, 25} samples per class to test data efficiency. Smaller training sets penalize overparameterized models.
   2. **Signal corruption** — add real noise (from `Noise/` directory) at controlled SNR levels to the real test signals, creating a harder evaluation.
   3. **Class granularity** — if a second real dataset with closer particle sizes (e.g., 2um vs 3um) can be acquired, this would be the hardest tier.
-- [x] **Design difficulty tiers:** All tiers derived from the same `data/dataset` source:
+- [x] **Design difficulty tiers:** All tiers derived from the same `datasets/processed/p0-baseline-3class/v1` source:
   - **Tier 1 (Standard):** Full train (~400/class) + clean test (~100/class). The primary benchmark.
   - **Tier 2 (Data-starved):** Same test set, but models trained on only 50 samples/class. Tests data efficiency — critical for real-world deployments where labelled real data is scarce.
   - **Tier 3 (Noisy):** Full train, but test signals corrupted with additive Gaussian noise at SNR=10 dB (always-on, p=1.0). Tests robustness to noise degradation.
   - **Tier 4 (Combined):** 50 samples/class train + noisy test (SNR=10 dB). The hardest tier — combines data scarcity and noise degradation.
 - [x] **Validate that difficulty tiers actually modulate difficulty:** Run Conv1D (the simplest baseline) on all 4 tiers. Expected: Tier 1 > Tier 2 > Tier 3 > Tier 4 accuracy. If not monotonic, adjust tier parameters.
-- [x] **Is the difficulty parametric and reproducible?** Yes — Tier 2 uses a fixed random seed for stratified subsampling. Tier 3 uses Gaussian noise at a fixed SNR=10 dB (always-on). Tier 4 combines both. All tiers derive from the same `data/dataset` — no external data dependencies.
+- [x] **Is the difficulty parametric and reproducible?** Yes — Tier 2 uses a fixed random seed for stratified subsampling. Tier 3 uses Gaussian noise at a fixed SNR=10 dB (always-on). Tier 4 combines both. All tiers derive from the same `datasets/processed/p0-baseline-3class/v1` — no external data dependencies.
 
 ### 2.3 — Dataset Construction
-- [x] **Data source:** `data/dataset` — real data acquired from the OFI sensor. All 4 tiers derive from this single source.
+- [x] **Data source:** `datasets/processed/p0-baseline-3class/v1` — real data acquired from the OFI sensor. All 4 tiers derive from this single source.
 - [x] **Dataset size per tier:**
   - Tier 1: ~301 test samples (100+101+100). Below the 1000/class ideal but this is the real-world constraint — all available labelled real data is used.
   - Tier 2: Same test samples, reduced train (50/class).
@@ -91,13 +91,13 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
   - **Mitigation for small test set**: report 95% confidence intervals via bootstrap (1000 resamples of the test set).
 - [x] **Class balance:** Approximately balanced. Tier 1 test: 100/101/101. No rebalancing needed.
 - [x] **Train / Validation / Test split:**
-  - [x] Fixed splits: test set from `data/dataset/test` is frozen and never touched during development.
+  - [x] Fixed splits: test set from `datasets/processed/p0-baseline-3class/v1/test` is frozen and never touched during development.
   - [x] Test set held out: the ~301 real test signals are the ground truth. No model selection decisions use this set.
-  - [x] Validation: 20% of `data/dataset/train` (stratified via `StratifiedShuffleSplit`), used for early stopping and hyperparameter tuning.
+  - [x] Validation: 20% of `datasets/processed/p0-baseline-3class/v1/train` (stratified via `StratifiedShuffleSplit`), used for early stopping and hyperparameter tuning.
   - [x] Split strategy: stratified random split with fixed seed=42. No grouped split needed since real data acquisition sessions are not tracked per-sample.
-- [x] **Data leakage check:** Already performed via `dataset_leaks.py`. S7_pure_real audit results exist in `audit_results/S7_pure_real/`. Verify no exact or near-duplicate contamination between train/test.
+- [x] **Data leakage check:** Already performed via `dataset_leaks.py`. S7_pure_real audit results exist in `audit_artifacts/SMI_CNN_limitations/benchmarks/S7_pure_real/`. Verify no exact or near-duplicate contamination between train/test.
 - [x] **Signal preprocessing:** Fixed preprocessing pipeline applied identically to all models: `BandpassFilter(5-100 kHz) -> Decimate(4x)`. Input to models: `(1, 625)` tensor. Preprocessing is NOT part of the benchmark (not varied across models).
-- [x] **Data format:** `.npy` files (float64, shape `(2500,)`), one file per signal. Directory structure: `data/dataset/{train,test}/{2um,4um,10um}/*.npy`.
+- [x] **Data format:** `.npy` files (float64, shape `(2500,)`), one file per signal. Directory structure: `datasets/processed/p0-baseline-3class/v1/{train,test}/{2um,4um,10um}/*.npy`.
 
 ### 2.4 — Documentation
 - [x] **Datasheet for the dataset:** Extend the existing `docs/generate_dataset_datasheet.md` with a section on S7_pure_real covering: sensor model, acquisition conditions, particle preparation method, labelling process (how are ground-truth sizes known?).
@@ -124,7 +124,7 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
 ### 3.3 — Sanity Checks
 - [x] **Random baseline:** 3-class random classifier → 33.3% accuracy. Reported as floor in results table.
 - [x] **Majority baseline:** Predict the most common class → ~33.6% (classes are near-balanced, so majority is barely above random). Reported alongside random baseline.
-- [x] **Known model check:** Run Conv1D with seed=42 on data/dataset. Record accuracy. Re-run the harness and verify identical accuracy output.
+- [x] **Known model check:** Run Conv1D with seed=42 on datasets/processed/p0-baseline-3class/v1. Record accuracy. Re-run the harness and verify identical accuracy output.
 - [x] **Determinism check:** Run Conv1D twice with same seed. Verify: identical accuracy, latency within 5% relative difference.
 
 ---
@@ -198,11 +198,11 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
 ### 6.1 — Code
 - [x] **Clean repository:** Structure:
   - `models/` — model zoo (already exists)
-  - `data/dataset/` — primary real dataset
+  - `datasets/processed/p0-baseline-3class/v1/` — primary real dataset
   - `benchmark_zoo.py` — the evaluation harness (to be created)
-  - `results/benchmark2/` — JSON/CSV results, figures
+  - `artifacts/SMI_CNN_limitations/benchmarks/benchmark2/` — JSON/CSV results, figures
   - `docs/` — reports and datasheets
-- [x] **README:** Update `README.md` with Benchmark 2 quickstart: `python benchmark_zoo.py --all --tier 1` to reproduce all results. Document how to add a new model to the zoo.
+- [x] **README:** Update `README.md` with Benchmark 2 quickstart: `.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --all --tier 1` to reproduce all results. Document how to add a new model to the zoo.
 - [x] **Requirements file:** Already exists (`requirements.txt`) with pinned versions. Add `thop` if not present.
 - [ ] **CI/tests (optional):** A smoke test that runs `benchmark_zoo.py --model Conv1D --epochs 1 --tier 1` on a 10-sample toy dataset and verifies JSON output format. *Nice to have for v1.1.*
 
@@ -226,9 +226,9 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
   - v1.0 cannot answer "which family scales best?" — only "which single model is best at ~5M params." The v1.1 scaling curves with size variants will address this gap.
 
 ### 6.3 — Maintenance
-- [x] **Leaderboard:** A markdown table in `results/benchmark2/leaderboard.md` with the latest results. Updated whenever a new model is added to the zoo.
+- [x] **Leaderboard:** A markdown table in `artifacts/SMI_CNN_limitations/benchmarks/benchmark2/leaderboard.md` with the latest results. Updated whenever a new model is added to the zoo.
 - [x] **Versioning policy:**
-  - v1.0: 8 CNN models, data/dataset, 4 tiers, CPU inference. Pareto plots with family-colored labeled points (YOLO-style visual conventions).
+  - v1.0: 8 CNN models, datasets/processed/p0-baseline-3class/v1, 4 tiers, CPU inference. Pareto plots with family-colored labeled points (YOLO-style visual conventions).
   - v1.1: Add S/M/L size variants for 2–4 core families (ResNet1D, MobileNet1D, EfficientNet1D, Conv1D) to enable true architecture scaling curves. Add transformer baseline. Cross-hardware latency checks. Quantized inference (INT8).
   - v2.0: New harder real dataset (more particle sizes or lower SNR acquisition), FPGA synthesis metrics.
 - [x] **Deprecation plan:** If all models score >98% on Tier 1 after v1.0, escalate to Tier 2/3 as the primary benchmark. If all tiers are saturated, acquire a harder real dataset (v2.0) or introduce a new evaluation axis (e.g., online learning, continual adaptation).
@@ -241,7 +241,7 @@ Use this section to record key design decisions as you go:
 
 | # | Decision | Chosen Option | Rationale | Date |
 |---|----------|---------------|-----------|------|
-| 1 | Primary evaluation target | data/dataset (3-class real data) | Benchmark 1 covered synthetic; Benchmark 2 must reflect deployment reality | 2026-04-03 |
+| 1 | Primary evaluation target | datasets/processed/p0-baseline-3class/v1 (3-class real data) | Benchmark 1 covered synthetic; Benchmark 2 must reflect deployment reality | 2026-04-03 |
 | 2 | Inference hardware for latency | CPU-only (Intel Core Ultra 7 265) | FPGA target has no GPU; CPU is the best available proxy | 2026-04-03 |
 | 3 | Hyperparameter strategy | Fixed across all models (no per-model tuning) | Ensures benchmark measures architecture, not tuning effort | 2026-04-03 |
 | 4 | Number of difficulty tiers | 4 (Standard, Data-starved, Noisy, Combined) | Covers the key failure modes: overfitting, noise robustness, and their combination | 2026-04-03 |
@@ -250,5 +250,5 @@ Use this section to record key design decisions as you go:
 | 7 | Efficiency score formula | accuracy / log10(MACs) | Rewards exponential MAC reduction; simple and interpretable | 2026-04-03 |
 | 8 | Test set confidence intervals | Bootstrap (1000 resamples) | Mitigates small test set (302 samples) statistical limitations | 2026-04-03 |
 | 9 | Architecture scaling curves | v1.0: YOLO-style Pareto styling; v1.1: S/M/L variants + connected curves | Single-scale models can't show scaling behavior; need width variants to answer "which family scales best?" — stronger paper argument | 2026-04-03 |
-| 10 | Primary dataset | data/dataset (instead of S7_pure_real) | Unified source for all 4 tiers; all difficulty derived from same dataset | 2026-04-03 |
+| 10 | Primary dataset | datasets/processed/p0-baseline-3class/v1 (instead of S7_pure_real) | Unified source for all 4 tiers; all difficulty derived from same dataset | 2026-04-03 |
 | 11 | Tier 4 redesign | Combined (data-starved + noisy) instead of cross-domain | All tiers now derive from a single dataset; no external dependencies | 2026-04-03 |

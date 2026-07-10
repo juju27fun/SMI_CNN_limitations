@@ -142,10 +142,10 @@ def save_confusion_matrix(path: Path, cm: np.ndarray, class_names: tuple[str, ..
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Train 3-class classifier on Particles2SNR_F event crops.")
-    add_common_training_args(parser, data_dir_default="P0/data/dataset_Particles2SNR_F_c1_events")
+    add_common_training_args(parser, data_dir_default="datasets/processed/particles2snr-f-c1-events/v1")
     parser.set_defaults(
         model="Conv1DGAP-L",
-        output_dir="P0/results/Particles2SNR_F_c1_event_3class",
+        output_dir="artifacts/SMI_CNN_limitations/Particles2SNR_F_c1_event_3class",
         optimizer="adamw",
         weight_decay=0.01,
         dataset_name="dataset_Particles2SNR_F_c1_events",

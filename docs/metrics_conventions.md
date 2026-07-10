@@ -48,7 +48,7 @@ emit `inference_latency_median_ms` for parity with `benchmark_zoo.py`.
 
 ## Real-time factor (RTF)
 
-For doublet inference (`results/doublet_3fam_retrained/_rt_data.json`):
+For doublet inference (`artifacts/SMI_CNN_limitations/benchmarks/doublet_3fam_retrained/_rt_data.json`):
 
 ```
 ρ = signal_duration_ms / latency_median_ms
@@ -58,7 +58,7 @@ signal_duration_ms = 8.192   # 4096 samples @ 500 kHz × 1000
 ρ > 1 means inference is faster than acquisition (real-time capable).
 ρ < 1 means saturation (faster acquisition than the model can
 process). The figure
-`results/doublet_3fam_retrained/realtime_factor_doublet_3fam.pdf`
+`artifacts/SMI_CNN_limitations/benchmarks/doublet_3fam_retrained/realtime_factor_doublet_3fam.pdf`
 shades the ρ < 1 zone for visual clarity, with annotation
 `"CPU torch, batch = 1"` for device provenance.
 

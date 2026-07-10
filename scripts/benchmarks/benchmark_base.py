@@ -1,12 +1,12 @@
 """Benchmark — Base model comparison (9 families, standard tier, no W&B).
 
-Trains the base (M) variant of all 9 model families on data/dataset
+Trains the base (M) variant of all 9 model families on datasets/processed/p0-baseline-3class/v1
 (3 classes: 2um, 4um, 10um) with 3 seeds, measures accuracy + latency,
 and generates:
-  - results/benchmark_base/runs/*.json       (per-run results)
-  - results/benchmark_base/summary.csv       (aggregated table)
-  - results/benchmark_base/leaderboard.md    (markdown leaderboard)
-  - results/benchmark_base/figures/pareto_latency.pdf
+  - artifacts/SMI_CNN_limitations/benchmark_base/runs/*.json       (per-run results)
+  - artifacts/SMI_CNN_limitations/benchmark_base/summary.csv       (aggregated table)
+  - artifacts/SMI_CNN_limitations/benchmark_base/leaderboard.md    (markdown leaderboard)
+  - artifacts/SMI_CNN_limitations/benchmark_base/figures/pareto_latency.pdf
 
 Usage:
     # All 9 base models, 3 seeds
@@ -523,9 +523,9 @@ def main():
     parser.add_argument("--model", type=str, default=None,
                         choices=BASE_MODELS,
                         help="Single model to run (default: all 9)")
-    parser.add_argument("--data-dir", type=str, default="data/dataset",
+    parser.add_argument("--data-dir", type=str, default="datasets/processed/p0-baseline-3class/v1",
                         help="Dataset root (must contain train/ and test/)")
-    parser.add_argument("--output-dir", type=str, default="results/benchmark_base",
+    parser.add_argument("--output-dir", type=str, default="artifacts/SMI_CNN_limitations/benchmark_base",
                         help="Output directory")
     parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=32)

@@ -6,7 +6,7 @@ le backbone vient de P1, puis P0 applique un global pooling sur le niveau le
 plus profond, une couche cachee et une tete de classification.
 
 Les valeurs du tableau viennent de
-`outputs/benchmarks/results/benchmark2/summary.csv`, Tier 1, CPU torch,
+`artifacts/SMI_CNN_limitations/benchmarks/benchmark2/summary.csv`, Tier 1, CPU torch,
 batch = 1.
 
 ## Vue commune dans P0

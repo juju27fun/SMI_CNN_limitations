@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import os
+from pathlib import Path
 
 import numpy as np
 
@@ -20,7 +21,11 @@ NOISE_FILE_LENGTH = 16384
 TRAIN_COUNT = 403
 TEST_COUNT = 101
 
-DATASETS = ["data/S1_white", "data/S2_colored", "data/dataset"]
+DATASETS = [
+    "datasets/processed/s1-white/v1",
+    "datasets/processed/s2-colored/v1",
+    "datasets/processed/p0-baseline-3class/v1",
+]
 PARTICLE_CLASSES = ["2um", "4um", "10um"]
 
 
@@ -123,12 +128,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Generate 4-class datasets (2um, 4um, 10um, Noise)"
     )
-    parser.add_argument("--noise-dir", type=str, default="data/Noise",
+    parser.add_argument("--noise-dir", type=str, default="datasets/processed/noise/v1",
                         help="Directory containing real noise .npy files")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility")
     parser.add_argument("--datasets", nargs="+", default=DATASETS,
                         help="Source dataset directories to process")
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path("datasets/interim/particles2SNR-pipeline/four-class-candidates"),
+    )
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -145,7 +155,7 @@ def main():
             print(f"WARNING: '{source_dir}' not found, skipping")
             continue
 
-        output_dir = f"{source_dir}_4c"
+        output_dir = args.output_root / f"{Path(source_dir).name}_4c"
         print(f"\n{'='*60}")
         print(f"Creating {output_dir} from {source_dir}")
         print(f"{'='*60}")

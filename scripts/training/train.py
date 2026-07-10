@@ -435,7 +435,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train a GAP model for particle classification")
     parser.add_argument("--model", type=str, default="Conv1DGAP",
                         help="Model architecture (default: Conv1DGAP)")
-    parser.add_argument("--data-dir", type=str, default="data/dataset", help="Path to dataset root directory")
+    parser.add_argument("--data-dir", type=str, default="datasets/processed/p0-baseline-3class/v1", help="Path to dataset root directory")
     parser.add_argument("--output-dir", type=str, default="output", help="Directory to save model and logs")
     parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size for training")

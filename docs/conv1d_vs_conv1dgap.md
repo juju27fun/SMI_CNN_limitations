@@ -104,5 +104,5 @@ parameters of `Conv1D`.
 ## Sources
 
 - Architectures: `models/conv1d.py`, `models/conv1d_gap.py`
-- Test accuracy and parameter counts: `outputs/benchmarks/results/benchmark2/summary.csv`
-- Validation accuracy: `outputs/benchmarks/results/benchmark2/runs/*-dataset-tier1-seed*.json`
+- Test accuracy and parameter counts: `artifacts/SMI_CNN_limitations/benchmarks/benchmark2/summary.csv`
+- Validation accuracy: `artifacts/SMI_CNN_limitations/benchmarks/benchmark2/runs/*-dataset-tier1-seed*.json`

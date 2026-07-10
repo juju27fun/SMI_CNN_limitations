@@ -795,7 +795,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train 4-class classifier (2um, 4um, 10um, Noise)"
     )
-    add_common_training_args(parser, data_dir_default="data/S1_white_4c")
+    add_common_training_args(parser, data_dir_default="datasets/processed/s1-white-4class/v1")
     parser.add_argument("--noise-dir", type=str, default=None,
                         help="Path to noise samples for OOD evaluation (default: None)")
     parser.add_argument("--real-test-dir", type=str, default=None,

@@ -1,7 +1,7 @@
 """PatchTST scratch vs pretrained comparison figure.
 
 Generates a presentation-friendly accuracy-vs-size plot from
-``outputs/benchmarks/results/patchtst_pretrained_p0_direct_20260702/summary.csv``.
+``artifacts/SMI_CNN_limitations/benchmarks/patchtst_pretrained_p0_direct_20260702/summary.csv``.
 """
 
 from __future__ import annotations
@@ -15,15 +15,13 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from p0.plotting import DCOL_W, apply_publication_style  # noqa: E402
 
 
 OUT_DIR = (
     _PROJECT_ROOT
-    / "outputs/benchmarks/results/patchtst_pretrained_p0_direct_20260702/figures"
+    / "artifacts/SMI_CNN_limitations/benchmarks/patchtst_pretrained_p0_direct_20260702/figures"
 )
 SUMMARY_CSV = OUT_DIR.parent / "summary.csv"
 

@@ -1,31 +1,16 @@
-# Canonical P0 Artifacts
+# Canonical classification inputs and artifacts
 
-Date: 2026-06-16
+Dataset versions are registered in the workspace `datasets/registry/index.yaml`.
+Use IDs in run metadata rather than mutable aliases.
 
-P0 is mostly a source of classification baselines and reusable datasets for
-P1/P2/P3. This registry records the paths that should be preferred in new work.
+| Role | Dataset ID |
+| --- | --- |
+| Baseline three-class classification | `p0-baseline-3class@v1` |
+| Baseline four-class classification | `p0-baseline-4class@v1` |
+| Active dual-clean class folders | `particles2snr-f-dual-clean-c1-class-folders@v1` |
+| Event classification | `particles2snr-f-dual-clean-c1-events@v1` |
+| Noise/background control | `noise@v1` |
 
-## Data
-
-| Role | Canonical path | Compatibility path |
-| --- | --- | --- |
-| Raw 2um C1 folder | `data/raw/C1_HF_5_10_2um_doublet2` | `C1_HF_5_10_2um_doublet2` |
-| Raw 4um C1 folder | `data/raw/C1_HF_5_10_4um_doublet` | `C1_HF_5_10_4um_doublet` |
-| Raw 10um C1 folder | `data/raw/C1_HF_5_10_10um_doublet` | `C1_HF_5_10_10um_doublet` |
-| Noise background dataset | `data/processed/Noise` | `data/Noise` |
-| Processed classification datasets | `data/processed/` | `data/<dataset_name>` symlinks |
-
-## Outputs
-
-| Role | Canonical path | Compatibility path |
-| --- | --- | --- |
-| Historical training outputs | `outputs/training/output` | `output` |
-| Benchmark results | `outputs/benchmarks/results` | `results` |
-| Dataset audits | `outputs/audits/audit_results` | `audit_results` |
-| Logs | `outputs/logs/logs` | `logs` |
-
-## Rule
-
-For current paper-facing detection/segmentation claims, prefer P1 registries.
-Use P0 primarily to cite classification baselines, raw/source data provenance,
-or reusable noise/background data.
+All run material belongs under `artifacts/SMI_CNN_limitations/<kind>/<run-id>`
+in the parent workspace. A paper-facing run must include `run.json`, the dataset
+ID/version, repository revisions, command, timestamps, and status.

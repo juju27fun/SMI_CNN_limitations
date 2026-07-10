@@ -2,7 +2,7 @@
 
 > Documentation for the publication-quality plotting system used by the
 > *Difficulty Tier* benchmark (`benchmark_zoo.py --tier all`). Covers the
-> figures produced under `results/<run>/figures/` that live on the *tier
+> figures produced under `artifacts/SMI_CNN_limitations/benchmarks/<run>/figures/` that live on the *tier
 > axis* (robustness / degradation curves) rather than the size axis.
 > Sibling document: [`variant_plotting.md`](variant_plotting.md) —
 > same infrastructure, different question.
@@ -83,7 +83,7 @@ figure and a tier figure side by side without any font-size drift.
 
 ## 3 — Figure inventory
 
-All four figures are emitted to `results/<run>/figures/` by
+All four figures are emitted to `artifacts/SMI_CNN_limitations/benchmarks/<run>/figures/` by
 `generate_tier_heatmap`, `generate_tier_robustness`, `generate_tier_grid`,
 and `generate_tier6_domain_gap`. They are wired unconditionally in
 `main()` — unlike the variant figures, they do **not** require
@@ -284,14 +284,14 @@ Consequences:
 
 If you see the tier-robustness lines drawn without any shading at all
 on what is supposed to be a multi-seed run, check that the expected
-seeds are present in `results/<run>/runs/*.json` — a crashed seed is
+seeds are present in `artifacts/SMI_CNN_limitations/benchmarks/<run>/runs/*.json` — a crashed seed is
 the most common cause.
 
 The canonical multi-seed invocation is:
 
 ```bash
-python benchmark_zoo.py --all --tier all --seeds 42,123,7 \
-    --epochs 150 --output-dir results/benchmark2
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --all --tier all --seeds 42,123,7 \
+    --epochs 150 --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2
 ```
 
 ---
@@ -374,7 +374,7 @@ retraining:
 
 ```bash
 source venv/bin/activate
-python benchmark_zoo.py --aggregate-only --output-dir results/benchmark2
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --aggregate-only --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2
 ```
 
 Note: `--scaling` is **not** required. The four tier figures are
@@ -419,7 +419,7 @@ logged only when `--scaling` is also set.
 
 The `benchmark2-report` artifact uploaded by
 `_attach_report_artifacts` contains **all** PDFs emitted to
-`results/<run>/figures/`, tier *and* variant. The tier PDFs land
+`artifacts/SMI_CNN_limitations/benchmarks/<run>/figures/`, tier *and* variant. The tier PDFs land
 under `figures/tier_*.pdf` inside the artifact (no per-axis
 sub-directory — the `figures/tier/*` split is a W&B media-panel
 convention, not a filesystem one). The PDFs are the vector originals;
@@ -435,10 +435,10 @@ requiring credentials.
 
 ```bash
 # Tier-only aggregation, no W&B side effect
-python benchmark_zoo.py --aggregate-only \
-    --output-dir results/benchmark2 --no-wandb-publish
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --aggregate-only \
+    --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2 --no-wandb-publish
 
 # Tier-only aggregation, published to offline cache
-python benchmark_zoo.py --aggregate-only \
-    --output-dir results/benchmark2 --wandb-offline
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --aggregate-only \
+    --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2 --wandb-offline
 ```

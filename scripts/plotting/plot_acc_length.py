@@ -1,6 +1,6 @@
 """Publication plot: doublet accuracy vs input length, per (family, kernel).
 
-Reads ``results/kernel_length_sweep_3fam/doublet_accuracy.json`` produced by
+Reads ``artifacts/SMI_CNN_limitations/kernel_length_sweep_3fam/doublet_accuracy.json`` produced by
 ``infer_doublets.py --sweep`` and emits 1x3 PDF figures — one panel per
 family, three curves per panel — using full B5 three-channel redundancy
 (Blues sequential color + distinct markers + distinct linestyles), so each
@@ -28,10 +28,8 @@ import numpy as np
 
 # Allow running from either the project root or the scripts/ subdirectory.
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
-from benchmark_zoo import FAMILY_COLORS, FAMILY_MARKERS, _emit_pdf  # noqa: E402
+from p0.benchmarking import FAMILY_COLORS, FAMILY_MARKERS, _emit_pdf  # noqa: E402
 from p0.plotting import apply_publication_style, COL_W, FIG_DOUBLE  # noqa: E402
 
 
@@ -358,7 +356,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--json", type=str,
-        default="results/kernel_length_sweep_3fam/doublet_accuracy.json",
+        default="artifacts/SMI_CNN_limitations/kernel_length_sweep_3fam/doublet_accuracy.json",
         help="Sweep doublet-accuracy JSON (from infer_doublets.py --sweep)",
     )
     parser.add_argument(
@@ -367,7 +365,7 @@ def main():
     )
     parser.add_argument(
         "--out-dir", type=str,
-        default="results/kernel_length_sweep_3fam",
+        default="artifacts/SMI_CNN_limitations/kernel_length_sweep_3fam",
         help="Destination directory for the PDFs",
     )
     args = parser.parse_args()

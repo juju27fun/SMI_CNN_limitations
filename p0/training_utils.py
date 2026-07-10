@@ -323,7 +323,7 @@ def create_scheduler(optimizer, args):
     return None
 
 
-def add_common_training_args(parser, data_dir_default="data/dataset"):
+def add_common_training_args(parser, data_dir_default="datasets/processed/p0-baseline-3class/v1"):
     """Add training arguments shared across training scripts."""
     all_model_names = list_models(include_variants=True)
     parser.add_argument(
@@ -335,7 +335,7 @@ def add_common_training_args(parser, data_dir_default="data/dataset"):
     )
     parser.add_argument("--data-dir", type=str, default=data_dir_default,
                         help="Path to dataset root (train/test)")
-    parser.add_argument("--output-dir", type=str, default="output",
+    parser.add_argument("--output-dir", type=str, default="artifacts/SMI_CNN_limitations/training",
                         help="Directory to save model and logs")
     parser.add_argument("--epochs", type=int, default=150, help="Number of training epochs")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")

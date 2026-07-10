@@ -9,20 +9,17 @@ import argparse
 import json
 import os
 import re
-import sys
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
-P0_ROOT = Path(__file__).resolve().parents[1]
-if str(P0_ROOT) not in sys.path:
-    sys.path.insert(0, str(P0_ROOT))
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 
 from p0.models import create_model  # noqa: E402
 from p0.data import RAW_SIGNAL_LENGTH  # noqa: E402
 
-from conv1dgap_accuracy_vs_snr import load_checkpoint_state  # noqa: E402
+from p0.snr_utils import load_checkpoint_state  # noqa: E402
 
 
 DEFAULT_CLASS_NAMES = ["2um", "4um", "10um"]
@@ -52,7 +49,7 @@ def parse_run_tag(tag):
 def find_run_metadata(checkpoint_path):
     tag = checkpoint_path.parent.name
     candidates = [
-        P0_ROOT / "results" / "benchmark2" / "runs" / f"{tag}.json",
+        WORKSPACE_ROOT / "artifacts" / "SMI_CNN_limitations" / "benchmark2" / "runs" / f"{tag}.json",
         checkpoint_path.parents[2] / "runs" / f"{tag}.json",
         checkpoint_path.parent.with_suffix(".json"),
     ]

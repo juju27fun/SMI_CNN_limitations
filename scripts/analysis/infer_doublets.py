@@ -88,7 +88,7 @@ def load_doublet_signals(data_dir):
     """Load doublet signals from a standard dataset directory.
 
     Expects the layout ``data_dir/{class_name}/*.npy`` (e.g. the test split
-    of ``data/dataset_doublet/test/``).
+    of ``datasets/processed/doublet/v1/test/``).
 
     Returns (signals, labels, filenames).
     """
@@ -383,7 +383,7 @@ def main():
     parser.add_argument("--output-dir", type=str, default="output",
                         help="Directory containing model checkpoints")
     parser.add_argument("--data-dir", type=str,
-                        default="data/dataset_doublet/test",
+                        default="datasets/processed/doublet/v1/test",
                         help="Directory with {class}/*.npy layout (default: test split)")
     parser.add_argument("--checkpoint-tag", type=str, default=None,
                         help="Only use checkpoints whose run tag contains this "
@@ -391,7 +391,7 @@ def main():
     parser.add_argument("--save-figures", action="store_true",
                         help="Save PDF confusion matrices and accuracy bar chart")
     parser.add_argument("--figures-dir", type=str,
-                        default="results/doublet_inference",
+                        default="artifacts/SMI_CNN_limitations/doublet_inference",
                         help="Output directory for figures")
     parser.add_argument("--sweep", action="store_true",
                         help="Discover kernel-length sweep checkpoints (dir "

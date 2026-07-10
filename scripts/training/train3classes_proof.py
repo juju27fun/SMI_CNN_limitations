@@ -3,9 +3,9 @@
 Mirrors train4classes.py structure and W&B logging for direct comparison.
 
 Usage:
-    python train3classes_proof.py --data-dir data/dataset --epochs 150 --wandb-offline
-    python train3classes_proof.py --model ResNet1D --data-dir data/dataset --epochs 150
-    python train3classes_proof.py --model InceptionTime1D --data-dir data/dataset --epochs 150
+    python train3classes_proof.py --data-dir datasets/processed/p0-baseline-3class/v1 --epochs 150 --wandb-offline
+    python train3classes_proof.py --model ResNet1D --data-dir datasets/processed/p0-baseline-3class/v1 --epochs 150
+    python train3classes_proof.py --model InceptionTime1D --data-dir datasets/processed/p0-baseline-3class/v1 --epochs 150
 """
 
 import argparse

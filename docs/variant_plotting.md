@@ -2,7 +2,7 @@
 
 > Documentation for the publication-quality plotting system used by the
 > *Model Zoo Scaling* benchmark (`benchmark_zoo.py --scaling`).
-> Covers the figures produced under `results/<run>/figures/`, the design
+> Covers the figures produced under `artifacts/SMI_CNN_limitations/benchmarks/<run>/figures/`, the design
 > constraints they satisfy, and how they are meant to be read.
 
 ---
@@ -78,7 +78,7 @@ different on-page size in LaTeX.
 
 ## 3 — Figure inventory
 
-All figures are emitted to `results/<run>/figures/` by
+All figures are emitted to `artifacts/SMI_CNN_limitations/benchmarks/<run>/figures/` by
 `generate_scaling_curves`, `generate_scaling_grid` (called twice —
 compute + storage view), `generate_pareto_publication` (called twice —
 MACs + size view), and `generate_pareto_latency_focus` (the dedicated
@@ -455,7 +455,7 @@ Regenerate every figure from cached JSON results without retraining:
 
 ```bash
 source venv/bin/activate
-python benchmark_zoo.py --aggregate-only --scaling --output-dir results/benchmark2
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --aggregate-only --scaling --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2
 ```
 
 ---
@@ -523,7 +523,7 @@ A few headline metrics are also written to `run.summary`:
 ### 10.4 — Opting out
 
 Use `--no-wandb-publish` to skip the report run entirely. The local
-PDFs are still emitted to `results/<run>/figures/` (that's the point
+PDFs are still emitted to `artifacts/SMI_CNN_limitations/benchmarks/<run>/figures/` (that's the point
 of the existing layout discipline), only the W&B side is disabled.
 Pair with `--wandb-offline` if you want to publish but don't have
 online credentials — both paths use the same offline cache under
@@ -531,10 +531,10 @@ online credentials — both paths use the same offline cache under
 
 ```bash
 # Publish locally only, no W&B side effect
-python benchmark_zoo.py --aggregate-only --scaling \
-    --output-dir results/benchmark2 --no-wandb-publish
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --aggregate-only --scaling \
+    --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2 --no-wandb-publish
 
 # Publish to offline W&B cache (sync later with `wandb sync`)
-python benchmark_zoo.py --aggregate-only --scaling \
-    --output-dir results/benchmark2 --wandb-offline
+.venv/bin/python SMI_CNN_limitations/scripts/benchmarks/benchmark_zoo.py --aggregate-only --scaling \
+    --output-dir artifacts/SMI_CNN_limitations/benchmarks/benchmark2 --wandb-offline
 ```

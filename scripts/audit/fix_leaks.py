@@ -48,14 +48,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Fix dataset leaks by source-level re-splitting."
     )
-    parser.add_argument("--dataset-root", type=Path, default=Path("data/dataset"),
-                        help="Path to the dataset root (default: data/dataset)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Show what would be done without modifying files")
+    parser.add_argument(
+        "--dataset-root",
+        type=Path,
+        default=Path("datasets/interim/particles2SNR-pipeline/leak-repair-candidate"),
+        help="Writable candidate dataset; registered datasets are immutable",
+    )
+    parser.add_argument("--execute", action="store_true", help="Apply the repair (default: dry run)")
     args = parser.parse_args()
 
     root = args.dataset_root
-    dry_run = args.dry_run
+    dry_run = not args.execute
 
     if dry_run:
         print("*** DRY RUN — no files will be modified ***\n")

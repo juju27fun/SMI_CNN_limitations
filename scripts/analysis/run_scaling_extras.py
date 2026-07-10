@@ -10,10 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-# Allow running from project root
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from benchmark_zoo import run_single
+from p0.benchmarking import run_single
 from p0.models import MODEL_VARIANTS, get_family
 from p0.training_utils import add_common_training_args
 
@@ -23,17 +20,17 @@ NEW_SUFFIXES = ("-Pico", "-Nano", "-XXS", "-XS")
 
 def main():
     parser = argparse.ArgumentParser(description="Run only Pico/Nano/XXS/XS scaling variants")
-    add_common_training_args(parser, data_dir_default="data/dataset")
+    add_common_training_args(parser, data_dir_default="datasets/processed/p0-baseline-3class/v1")
     parser.set_defaults(patience=20, epochs=150, scheduler="cosine",
-                        output_dir="results/benchmark2")
+                        output_dir="artifacts/SMI_CNN_limitations/benchmark2")
     parser.add_argument("--tier", type=int, default=1,
                         choices=[1, 2, 3, 4, 5, 6])
     parser.add_argument("--seeds", type=str, default="42")
     # Tier-5/6-specific args (must mirror benchmark_zoo.py defaults so that
     # run_single can read them regardless of tier).
-    parser.add_argument("--noise-dir", type=str, default="data/Noise",
+    parser.add_argument("--noise-dir", type=str, default="datasets/processed/noise/v1",
                         help="Directory of real noise .npy files (tier 5)")
-    parser.add_argument("--real-test-dir", type=str, default="data/S7_pure_real",
+    parser.add_argument("--real-test-dir", type=str, default="datasets/processed/s7-pure-real/v1",
                         help="Directory of real measurements for tier 6")
     args = parser.parse_args()
 

@@ -7,6 +7,16 @@ name = "p0-particle-benchmark"
 version = "0.1.0"
 description = "P0 particle classification benchmark utilities"
 requires-python = ">=3.10"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "PyYAML",
+    "scikit-learn",
+    "scipy",
+    "torch",
+    "wandb",
+]
 
-[tool.setuptools]
-packages = ["p0"]
+[tool.setuptools.packages.find]
+include = ["p0*"]

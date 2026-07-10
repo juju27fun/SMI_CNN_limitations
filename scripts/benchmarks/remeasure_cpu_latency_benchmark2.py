@@ -1,7 +1,7 @@
 """Re-measure CPU latency for the 432 benchmark2 runs from saved checkpoints.
 
 Phases:
-  1. For each JSON in results/benchmark2/runs/:
+  1. For each JSON in artifacts/SMI_CNN_limitations/benchmark2/runs/:
      - Instantiate the model (registry first, legacy fallback).
      - Load checkpoint weights.
      - Measure CPU latency with measure_cpu_latency().
@@ -12,7 +12,7 @@ Phases:
 CLI flags:
   --dry-run       Validate mapping + instantiate; no measurement, no writes.
   --limit N       Process only the first N JSONs (debug).
-  --runs-dir PATH Override runs directory (default: results/benchmark2/runs).
+  --runs-dir PATH Override runs directory (default: artifacts/SMI_CNN_limitations/benchmark2/runs).
   --no-figures    Skip Phase 3 figure regeneration.
 """
 
@@ -29,8 +29,6 @@ import torch
 
 # ── Ensure project root is on sys.path ────────────────────────────────────────
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from p0.models import create_model  # noqa: E402
 from p0.data import RAW_SIGNAL_LENGTH  # noqa: E402
@@ -45,35 +43,35 @@ NUM_CLASSES: int = 3
 WARMUP: int = 20
 N_RUNS: int = 200
 
-DEFAULT_RUNS_DIR = Path("results/benchmark2/runs")
-CHECKPOINTS_DIR = Path("results/benchmark2/checkpoints")
-SUMMARY_CSV = Path("results/benchmark2/summary.csv")
-SUMMARY_BACKUP = Path("results/benchmark2/summary_gpu_backup.csv")
+DEFAULT_RUNS_DIR = Path("artifacts/SMI_CNN_limitations/benchmark2/runs")
+CHECKPOINTS_DIR = Path("artifacts/SMI_CNN_limitations/benchmark2/checkpoints")
+SUMMARY_CSV = Path("artifacts/SMI_CNN_limitations/benchmark2/summary.csv")
+SUMMARY_BACKUP = Path("artifacts/SMI_CNN_limitations/benchmark2/summary_gpu_backup.csv")
 
 # Legacy models no longer in MODEL_REGISTRY / MODEL_VARIANTS.
 # Format: name -> (module, class_name, extra_kwargs)
 LEGACY_MODELS: dict[str, tuple[str, str, dict[str, Any]]] = {
-    "Conv1D":       ("models.conv1d", "Conv1DClassifier", {}),
-    "Conv1D-Pico":  ("models.conv1d", "Conv1DClassifier", {"width_mult": 0.0125}),
-    "Conv1D-Nano":  ("models.conv1d", "Conv1DClassifier", {"width_mult": 0.025}),
-    "Conv1D-XXS":   ("models.conv1d", "Conv1DClassifier", {"width_mult": 0.1}),
-    "Conv1D-XS":    ("models.conv1d", "Conv1DClassifier", {"width_mult": 0.25}),
-    "Conv1D-S":     ("models.conv1d", "Conv1DClassifier", {"width_mult": 0.5}),
-    "Conv1D-L":     ("models.conv1d", "Conv1DClassifier", {"width_mult": 2.0}),
-    "LeNet1D":      ("models.lenet1d", "LeNet1D", {}),
-    "LeNet1D-Pico": ("models.lenet1d", "LeNet1D", {"width_mult": 0.01}),
-    "LeNet1D-Nano": ("models.lenet1d", "LeNet1D", {"width_mult": 0.025}),
-    "LeNet1D-XXS":  ("models.lenet1d", "LeNet1D", {"width_mult": 0.1}),
-    "LeNet1D-XS":   ("models.lenet1d", "LeNet1D", {"width_mult": 0.25}),
-    "LeNet1D-S":    ("models.lenet1d", "LeNet1D", {"width_mult": 0.5}),
-    "LeNet1D-L":    ("models.lenet1d", "LeNet1D", {"width_mult": 2.0}),
-    "VGG1D":        ("models.vgg1d", "VGG1D", {}),
-    "VGG1D-Pico":   ("models.vgg1d", "VGG1D", {"width_mult": 0.0125}),
-    "VGG1D-Nano":   ("models.vgg1d", "VGG1D", {"width_mult": 0.025}),
-    "VGG1D-XXS":    ("models.vgg1d", "VGG1D", {"width_mult": 0.1}),
-    "VGG1D-XS":     ("models.vgg1d", "VGG1D", {"width_mult": 0.25}),
-    "VGG1D-S":      ("models.vgg1d", "VGG1D", {"width_mult": 0.5}),
-    "VGG1D-L":      ("models.vgg1d", "VGG1D", {"width_mult": 2.0}),
+    "Conv1D":       ("p0.models.conv1d", "Conv1DClassifier", {}),
+    "Conv1D-Pico":  ("p0.models.conv1d", "Conv1DClassifier", {"width_mult": 0.0125}),
+    "Conv1D-Nano":  ("p0.models.conv1d", "Conv1DClassifier", {"width_mult": 0.025}),
+    "Conv1D-XXS":   ("p0.models.conv1d", "Conv1DClassifier", {"width_mult": 0.1}),
+    "Conv1D-XS":    ("p0.models.conv1d", "Conv1DClassifier", {"width_mult": 0.25}),
+    "Conv1D-S":     ("p0.models.conv1d", "Conv1DClassifier", {"width_mult": 0.5}),
+    "Conv1D-L":     ("p0.models.conv1d", "Conv1DClassifier", {"width_mult": 2.0}),
+    "LeNet1D":      ("p0.models.lenet1d", "LeNet1D", {}),
+    "LeNet1D-Pico": ("p0.models.lenet1d", "LeNet1D", {"width_mult": 0.01}),
+    "LeNet1D-Nano": ("p0.models.lenet1d", "LeNet1D", {"width_mult": 0.025}),
+    "LeNet1D-XXS":  ("p0.models.lenet1d", "LeNet1D", {"width_mult": 0.1}),
+    "LeNet1D-XS":   ("p0.models.lenet1d", "LeNet1D", {"width_mult": 0.25}),
+    "LeNet1D-S":    ("p0.models.lenet1d", "LeNet1D", {"width_mult": 0.5}),
+    "LeNet1D-L":    ("p0.models.lenet1d", "LeNet1D", {"width_mult": 2.0}),
+    "VGG1D":        ("p0.models.vgg1d", "VGG1D", {}),
+    "VGG1D-Pico":   ("p0.models.vgg1d", "VGG1D", {"width_mult": 0.0125}),
+    "VGG1D-Nano":   ("p0.models.vgg1d", "VGG1D", {"width_mult": 0.025}),
+    "VGG1D-XXS":    ("p0.models.vgg1d", "VGG1D", {"width_mult": 0.1}),
+    "VGG1D-XS":     ("p0.models.vgg1d", "VGG1D", {"width_mult": 0.25}),
+    "VGG1D-S":      ("p0.models.vgg1d", "VGG1D", {"width_mult": 0.5}),
+    "VGG1D-L":      ("p0.models.vgg1d", "VGG1D", {"width_mult": 2.0}),
 }
 
 
@@ -103,7 +101,7 @@ def instantiate_model(model_name: str) -> tuple[Any, str]:
     """
     # 1. Special-case: ResNet1D variants — checkpoints use the v0 stem kernel
     if model_name in RESNET1D_V0_VARIANTS:
-        from models._resnet1d_legacy_v0 import ResNet1DLegacyV0
+        from p0.models._resnet1d_legacy_v0 import ResNet1DLegacyV0
         kwargs = RESNET1D_V0_VARIANTS[model_name]
         model = ResNet1DLegacyV0(input_length=INPUT_LENGTH,
                                  num_classes=NUM_CLASSES, **kwargs)
@@ -291,10 +289,10 @@ def phase1_patch_jsons(
 
 def phase2_aggregate() -> None:
     """Re-aggregate all JSONs into summary.csv via benchmark_zoo.aggregate_results."""
-    from benchmark_zoo import aggregate_results  # local import to defer heavy deps
+    from p0.benchmarking import aggregate_results  # local import to defer heavy deps
 
     print("[INFO] Re-aggregating results -> summary.csv ...")
-    aggregate_results(Path("results/benchmark2"))
+    aggregate_results(Path("artifacts/SMI_CNN_limitations/benchmark2"))
     print("[INFO] summary.csv updated.")
 
 
@@ -303,19 +301,19 @@ def phase2_aggregate() -> None:
 def phase3_figures() -> None:
     """Re-generate publication figures via benchmark_zoo.regenerate_and_publish_figures."""
     import argparse as _argparse
-    from benchmark_zoo import regenerate_and_publish_figures  # local import
+    from p0.benchmarking import regenerate_and_publish_figures  # local import
 
     # Minimal Namespace: only output_dir and scaling are accessed when
     # wandb_publish=False (the wandb.init block is skipped entirely).
     fig_args = _argparse.Namespace(
-        output_dir="results/benchmark2",
+        output_dir="artifacts/SMI_CNN_limitations/benchmark2",
         scaling=True,   # enables pareto_latency + scaling_grid
         project="particle-benchmark",
         no_wandb=True,
     )
     print("[INFO] Re-generating figures ...")
     regenerate_and_publish_figures(fig_args, summary_df=None, wandb_publish=False)
-    print("[INFO] Figures regenerated in results/benchmark2/figures/")
+    print("[INFO] Figures regenerated in artifacts/SMI_CNN_limitations/benchmark2/figures/")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────

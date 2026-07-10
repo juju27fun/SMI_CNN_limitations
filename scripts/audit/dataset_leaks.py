@@ -359,12 +359,12 @@ def main():
         description="Detect data leaks in a deep learning dataset."
     )
     parser.add_argument(
-        "dataset", type=str, nargs="?", default="data/dataset",
-        help="Path to dataset root (default: data/dataset)",
+        "dataset", type=str, nargs="?", default="datasets/processed/p0-baseline-3class/v1",
+        help="Path to dataset root (default: datasets/processed/p0-baseline-3class/v1)",
     )
     parser.add_argument(
-        "--report-dir", type=str, default="leak_reports",
-        help="Directory to save detailed leak reports (default: leak_reports)",
+        "--report-dir", type=str, default="artifacts/SMI_CNN_limitations/audits/leak_reports",
+        help="Directory to save detailed leak reports",
     )
     parser.add_argument(
         "--similarity-threshold", type=float, default=0.99,

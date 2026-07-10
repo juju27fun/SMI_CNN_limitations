@@ -21,7 +21,7 @@ older commands or other projects. Root data/output symlinks were retired on
 | Root raw C1 folders | `C1_HF_5_10_*` | `data/raw/` |
 | Existing datasets under `data/` | `data/<dataset>` | `data/processed/<dataset>` |
 | Training outputs | `output` | `outputs/training/output` |
-| Benchmark outputs | `results` | `outputs/benchmarks/results` |
+| Benchmark outputs | `results` | `artifacts/SMI_CNN_limitations/benchmarks` |
 | Dataset audits | `audit_results` | `outputs/audits/audit_results` |
 | Logs | `logs` | `outputs/logs/logs` |
 | Artifacts | `artifacts` | `outputs/artifacts/artifacts` |
@@ -34,7 +34,7 @@ targets:
 
 - `C1_HF_5_10_*` -> `data/raw/`
 - `output` -> `outputs/training/output`
-- `results` -> `outputs/benchmarks/results`
+- `results` -> `artifacts/SMI_CNN_limitations/benchmarks`
 - `audit_results` -> `outputs/audits/audit_results`
 - `logs` -> `outputs/logs/logs`
 - `artifacts` -> `outputs/artifacts/artifacts`

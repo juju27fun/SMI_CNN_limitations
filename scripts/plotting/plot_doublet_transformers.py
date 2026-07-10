@@ -1,6 +1,6 @@
 """Publication-style doublet plots for Swin1D and PatchTST.
 
-Outputs in ``results/doublet_transformers_retrained_lr1e4``:
+Outputs in ``artifacts/SMI_CNN_limitations/doublet_transformers_retrained_lr1e4``:
   - ``doublet_comparison_acc_latency.pdf``
   - ``realtime_factor_doublet_3fam.pdf``
   - ``_lat_comparison.json``
@@ -23,13 +23,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from p0.plotting import DCOL_W, apply_publication_style  # noqa: E402
 
 
-OUT_DIR = _PROJECT_ROOT / "outputs/benchmarks/results/doublet_transformers_retrained_lr1e4"
+OUT_DIR = _PROJECT_ROOT.parent / "artifacts/SMI_CNN_limitations/benchmarks/doublet_transformers_retrained_lr1e4"
 LAT_REMEASURE = OUT_DIR / "_latency_remeasure.json"
 
 MODELS = ["PatchTST", "Swin1D"]

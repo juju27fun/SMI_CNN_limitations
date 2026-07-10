@@ -6,7 +6,7 @@ Phases:
      consumed by plot_doublet_comparison.py.
   3. Re-execute the two plot scripts via subprocess.
 
-The checkpoints in outputs/training/output/<model>-dataset_doublet-train/ are
+The checkpoints in artifacts/SMI_CNN_limitations/training/output/<model>-dataset_doublet-train/ are
 zoo baseline models (3 classes, trained with architecture-specific kwargs such
 as kernel_size=7 for ResNet1D). They are loaded via model.pth.tar (full
 serialised model object) to recover the exact architecture without guessing
@@ -18,7 +18,7 @@ CLI flags:
   --dry-run     Validate mapping and instantiate models; no measurement, no writes.
   --no-replot   Skip Phase 3 (subprocess plot regeneration).
   --rt-data     Override path to _rt_data.json
-                (default: outputs/benchmarks/results/doublet_3fam_retrained/_rt_data.json).
+                (default: artifacts/SMI_CNN_limitations/benchmarks/doublet_3fam_retrained/_rt_data.json).
 """
 
 import argparse
@@ -33,8 +33,6 @@ import torch
 
 # ── Ensure project root is on sys.path ────────────────────────────────────────
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(_PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(_PROJECT_ROOT))
 
 from p0.training_utils import measure_cpu_latency  # noqa: E402
 
@@ -47,7 +45,7 @@ NUM_CLASSES_DOUBLET: int = 2        # binary: doublet / non-doublet (unused for 
 COMPARISON_FAMILIES: list[str] = ["Conv1DGAP", "ResNet1D", "EfficientNet1D"]
 
 DEFAULT_RT_DATA = Path(
-    "outputs/benchmarks/results/doublet_3fam_retrained/_rt_data.json"
+    "artifacts/SMI_CNN_limitations/benchmarks/doublet_3fam_retrained/_rt_data.json"
 )
 
 WARMUP: int = 20
@@ -59,7 +57,7 @@ N_RUNS: int = 200
 def _tar_path(model_name: str) -> Path:
     """Return the full-model archive path for a given model_name."""
     canonical = Path(
-        f"outputs/training/output/{model_name}-dataset_doublet-train/model.pth.tar"
+        f"artifacts/SMI_CNN_limitations/training/output/{model_name}-dataset_doublet-train/model.pth.tar"
     )
     if canonical.exists():
         return canonical

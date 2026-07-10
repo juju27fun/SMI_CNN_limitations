@@ -1,7 +1,7 @@
-"""Rebuild data/S_union from source datasets S0–S9 (train) and data/dataset (test).
+"""Rebuild data/S_union from source datasets S0–S9 (train) and datasets/processed/p0-baseline-3class/v1 (test).
 
 Train set: copies .npy files from S0–S9 train dirs into S_union/train/{class}/
-Test set:  copies files from data/dataset/test/{class}/ (real laser data)
+Test set:  copies files from datasets/processed/p0-baseline-3class/v1/test/{class}/ (real laser data)
 
 Usage:
     python build_union_dataset.py          # only build if S_union doesn't exist
@@ -64,7 +64,7 @@ def build_union(force: bool = False) -> None:
         print(f"  {cls}: {count} files")
 
     # Build test set (copy real laser data, keep original filenames)
-    print("Building test set from data/dataset/test/...")
+    print("Building test set from datasets/processed/p0-baseline-3class/v1/test/...")
     for cls in CLASSES:
         src_dir = REAL_TEST_DIR / cls
         out_dir = UNION_DIR / "test" / cls
