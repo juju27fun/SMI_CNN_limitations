@@ -269,7 +269,7 @@ def run_single(model_name, seed, args):
     print(f"\n  Test accuracy: {acc:.4f}  [{ci_lower:.4f}, {ci_upper:.4f}]")
     print(classification_report(y_true, y_pred, target_names=CLASS_NAMES, digits=4))
 
-    # Efficiency (CPU canonical, see doc/metrics_conventions.md)
+    # Efficiency (CPU canonical, see docs/metrics_conventions.md)
     latency = measure_cpu_latency(model, (1, 1, input_length),
                                   warmup=20, n_runs=200)
     peak_ram = measure_peak_ram(model, (1, 1, input_length), device)

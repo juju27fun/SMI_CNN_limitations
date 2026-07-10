@@ -100,7 +100,7 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
 - [x] **Data format:** `.npy` files (float64, shape `(2500,)`), one file per signal. Directory structure: `data/dataset/{train,test}/{2um,4um,10um}/*.npy`.
 
 ### 2.4 — Documentation
-- [x] **Datasheet for the dataset:** Extend the existing `doc/generate_dataset_datasheet.md` with a section on S7_pure_real covering: sensor model, acquisition conditions, particle preparation method, labelling process (how are ground-truth sizes known?).
+- [x] **Datasheet for the dataset:** Extend the existing `docs/generate_dataset_datasheet.md` with a section on S7_pure_real covering: sensor model, acquisition conditions, particle preparation method, labelling process (how are ground-truth sizes known?).
 - [x] **License:** Internal / lab use. Not publicly released. Document this explicitly.
 - [x] **Versioning:** v1.0 = current S7_pure_real. v1.1 if corrupted noise tiers are added. v2.0 if a new real dataset with more/harder classes is acquired.
 
@@ -201,14 +201,14 @@ No standard benchmark exists for 1D OFI particle classification — this is a ni
   - `data/dataset/` — primary real dataset
   - `benchmark_zoo.py` — the evaluation harness (to be created)
   - `results/benchmark2/` — JSON/CSV results, figures
-  - `doc/` — reports and datasheets
+  - `docs/` — reports and datasheets
 - [x] **README:** Update `README.md` with Benchmark 2 quickstart: `python benchmark_zoo.py --all --tier 1` to reproduce all results. Document how to add a new model to the zoo.
 - [x] **Requirements file:** Already exists (`requirements.txt`) with pinned versions. Add `thop` if not present.
 - [ ] **CI/tests (optional):** A smoke test that runs `benchmark_zoo.py --model Conv1D --epochs 1 --tier 1` on a 10-sample toy dataset and verifies JSON output format. *Nice to have for v1.1.*
 
 ### 6.2 — Paper / Report
-- [x] **Benchmark paper:** Extend `doc/temporary_report.md` with a "Benchmark 2: Model Zoo Comparison" section covering: motivation (FPGA deployment), design, results, Pareto analysis, key findings.
-- [x] **Figures:** (full design rationale in [`doc/variant_plotting.md`](doc/variant_plotting.md))
+- [x] **Benchmark paper:** Extend `docs/temporary_report.md` with a "Benchmark 2: Model Zoo Comparison" section covering: motivation (FPGA deployment), design, results, Pareto analysis, key findings.
+- [x] **Figures:** (full design rationale in [`docs/variant_plotting.md`](variant_plotting.md))
   1. Accuracy vs. MACs Pareto front (`pareto.pdf`) — single column, colorblind-safe, numbered badges + boxed key listing every front member
   2. Accuracy vs. Latency Pareto front (`pareto_latency.pdf`) — same layout as above with log-latency on the x-axis (replaces the old `scaling_latency.pdf`, which became unreadable in the variant zoo because of kernel-launch clumping)
   3. Per-family scaling envelope (`scaling_macs.pdf`) — accuracy vs MACs with cumulative-max envelope per family + dominated variants as faint hollow markers

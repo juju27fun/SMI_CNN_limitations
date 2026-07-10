@@ -1,3 +1,10 @@
+# PF Calcul
+
+- For remote pfcalcul GPU work, read `PF_CALCUL_JUPYTER_FIRST_AGENT_PROMPT.md`
+  from this directory before launching anything.
+- For interactive/fast pfcalcul GPU execution, use the Jupyter RTX PRO runner.
+  Do not launch GPU training directly over SSH.
+
 # P0 Codex Instructions
 
 ## Project Snapshot

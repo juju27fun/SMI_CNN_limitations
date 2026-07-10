@@ -150,6 +150,39 @@ FAMILY_LINESTYLES = {
     "VGG1D":           (0, (3, 1, 1, 1, 1, 1)),          # dash-dot-dot-dot (tight)
 }
 
+TRANSFORMER_FAMILY_ORDER = ("PatchTST", "Swin1D")
+
+
+def _ordered_families(families):
+    """Keep CNN panels stable and append transformer panels at the end."""
+    unique = sorted(set(families))
+    transformer_set = set(TRANSFORMER_FAMILY_ORDER)
+    cnn_families = [family for family in unique if family not in transformer_set]
+    transformer_families = [
+        family for family in TRANSFORMER_FAMILY_ORDER
+        if family in unique
+    ]
+    return cnn_families + transformer_families
+
+
+def _legend_entries_for_row_major(handles, labels, n_cols):
+    """Order entries so a multi-column legend reads row-major visually."""
+    pairs = list(zip(handles, labels))
+    n_items = len(pairs)
+    if n_items == 0 or n_cols <= 1:
+        return handles, labels
+
+    n_rows = math.ceil(n_items / n_cols)
+    ordered = []
+    for col in range(n_cols):
+        for row in range(n_rows):
+            idx = row * n_cols + col
+            if idx < n_items:
+                ordered.append(pairs[idx])
+
+    ordered_handles, ordered_labels = zip(*ordered)
+    return list(ordered_handles), list(ordered_labels)
+
 # ──────────────────────────────────────────────
 # Publication style (double-column LaTeX figures)
 # ──────────────────────────────────────────────
@@ -222,7 +255,7 @@ def _emit_pdf(fig, figures_dir, fname, *, wandb_run=None,
     ``wandb.Image(fig, caption=...)`` which rasterises the Figure to PNG
     in-memory — **no PNG sibling file is written to disk**, preserving
     the existing "no PNG variants" convention from
-    ``doc/variant_plotting.md`` §8.5.
+    ``docs/variant_plotting.md`` §8.5.
 
     Parameters
     ----------
@@ -308,6 +341,7 @@ def create_tier_loaders(tier, seed, args):
         it contains ``{"synthetic": ..., "real": ...}``.
     """
     data_dir = Path(args.data_dir)
+    num_workers = getattr(args, "num_workers", 4)
 
     # Decimation sweep path (Phase 2): when --native-length is set together
     # with --input-length, replace the default BandpassFilter+Decimate+CenterCrop
@@ -352,11 +386,11 @@ def create_tier_loaders(tier, seed, args):
             real_test_dir, CLASS_NAMES, transforms=base_transforms
         )
 
-        train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-        val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+        train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers)
+        val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers)
         test_loaders = {
-            "synthetic": DataLoader(test_dataset_synthetic, batch_size=args.batch_size, shuffle=False, num_workers=4),
-            "real":      DataLoader(test_dataset_real,      batch_size=args.batch_size, shuffle=False, num_workers=4),
+            "synthetic": DataLoader(test_dataset_synthetic, batch_size=args.batch_size, shuffle=False, num_workers=num_workers),
+            "real":      DataLoader(test_dataset_real,      batch_size=args.batch_size, shuffle=False, num_workers=num_workers),
         }
         return train_loader, val_loader, test_loaders, train_size
 
@@ -406,9 +440,9 @@ def create_tier_loaders(tier, seed, args):
     val_subset = Subset(val_dataset, val_idx)
     train_size = len(train_idx)
 
-    train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=4)
-    val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, num_workers=4)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=num_workers)
     test_loaders = {"": test_loader}
 
     return train_loader, val_loader, test_loaders, train_size
@@ -477,6 +511,12 @@ def run_single(model_name, tier, seed, args):
     print(f"  {run_tag}")
     print(f"{'=' * 70}")
 
+    existing_json = Path(args.output_dir) / "runs" / f"{run_tag}.json"
+    if getattr(args, "skip_existing", False) and existing_json.exists():
+        print(f"  Existing result found, skipping: {existing_json}")
+        with open(existing_json) as f:
+            return json.load(f)
+
     # Seed everything
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -511,7 +551,9 @@ def run_single(model_name, tier, seed, args):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # W&B init
-    wandb_mode = "offline" if args.wandb_offline else "online"
+    wandb_mode = os.environ.get("WANDB_MODE", "").lower()
+    if wandb_mode not in {"disabled", "offline", "online"}:
+        wandb_mode = "offline" if args.wandb_offline else "online"
     model_macs = compute_model_macs(model, (1, 1, input_length), device)
 
     config = {
@@ -534,6 +576,9 @@ def run_single(model_name, tier, seed, args):
         "tier": tier,
         "tier_name": tier_name,
     }
+    pretrained_metadata = getattr(model, "pretrained_metadata", None)
+    if pretrained_metadata is not None:
+        config["pretrained_metadata"] = pretrained_metadata
 
     tags = [tier_name, f"tier{tier}", f"seed{seed}"]
     if kernel_size is not None or input_length_arg is not None:
@@ -626,7 +671,7 @@ def run_single(model_name, tier, seed, args):
         per_class_f1 = primary["per_class_f1"]
         cm = primary["confusion_matrix"]
 
-        # Efficiency metrics (CPU canonical, see doc/metrics_conventions.md)
+        # Efficiency metrics (CPU canonical, see docs/metrics_conventions.md)
         latency = measure_cpu_latency(model, (1, 1, input_length), warmup=20, n_runs=200)
         peak_ram = measure_peak_ram(model, (1, 1, input_length), device)
         _, size_mb = measure_model_size(model)
@@ -651,6 +696,9 @@ def run_single(model_name, tier, seed, args):
             "seed": seed,
             "tier": tier,
             "tier_name": tier_name,
+            "learning_rate": args.lr,
+            "optimizer": args.optimizer,
+            "weight_decay": args.weight_decay,
             "params": num_params,
             "macs": model_macs,
             "size_mb": round(size_mb, 2),
@@ -669,6 +717,8 @@ def run_single(model_name, tier, seed, args):
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "hardware_info": get_hardware_info(),
         }
+        if pretrained_metadata is not None:
+            result["pretrained_metadata"] = pretrained_metadata
         if tier == 6:
             result["accuracy_synthetic"] = round(test_results["synthetic"]["accuracy"], 4)
             result["accuracy_real"] = round(test_results["real"]["accuracy"], 4)
@@ -734,6 +784,9 @@ def aggregate_results(output_dir):
             "Tier_Name": TIER_NAMES.get(int(tier), "unknown"),
             "Kernel_Size": None if (k_val in (None, -1)) else int(k_val),
             "Input_Length": None if (L_val in (None, -1)) else int(L_val),
+            "Learning_Rate": grp["learning_rate"].iloc[0] if "learning_rate" in grp.columns else None,
+            "Optimizer": grp["optimizer"].iloc[0] if "optimizer" in grp.columns else None,
+            "Weight_Decay": grp["weight_decay"].iloc[0] if "weight_decay" in grp.columns else None,
             "Params": int(grp["params"].iloc[0]),
             "MACs": int(grp["macs"].iloc[0]) if grp["macs"].iloc[0] is not None else None,
             "Size_MB": round(grp["size_mb"].mean(), 2),
@@ -919,7 +972,7 @@ def _load_tier1_aggregated(output_dir):
         size_tag=("model_size_tag", "first"),
     ).reset_index()
     agg["acc_std"] = agg["acc_std"].fillna(0.0)
-    families = sorted(agg["family"].unique())
+    families = _ordered_families(agg["family"].unique())
     return agg, families
 
 
@@ -1467,15 +1520,13 @@ def generate_pareto_latency_focus(output_dir, *, wandb_run=None):
     ax.set_ylabel("Error rate  (1 − accuracy)   [log scale]")
     _remove_chartjunk(ax)
 
-    ax.text(
-        0.99, 0.01, "CPU torch, batch = 1",
-        transform=ax.transAxes, ha="right", va="bottom",
-        fontsize=6, color="0.50", style="italic",
-    )
-
     # ── family legend in the upper-right (sparser quadrant — only the
     # high-error pico outliers live up there and they're tagged inline)
-    ax.legend(loc="upper right", ncol=4, columnspacing=0.7,
+    legend_ncols = 4
+    handles, labels = ax.get_legend_handles_labels()
+    handles, labels = _legend_entries_for_row_major(handles, labels, legend_ncols)
+    ax.legend(handles, labels,
+              loc="upper right", ncol=legend_ncols, columnspacing=0.7,
               handletextpad=0.35, borderaxespad=0.5, fontsize=7,
               frameon=True, framealpha=0.85)
 
@@ -1538,7 +1589,7 @@ def _load_all_tiers_aggregated(output_dir):
     ).reset_index()
     agg["acc_std"] = agg["acc_std"].fillna(0.0)
     agg["tier"] = agg["tier"].astype(int)
-    families = sorted(agg["family"].unique())
+    families = _ordered_families(agg["family"].unique())
     return agg, families
 
 
@@ -1834,7 +1885,11 @@ def regenerate_and_publish_figures(args, summary_df=None, *, wandb_publish=True)
             group="benchmark2-report",
             job_type="benchmark-report",
             tags=["benchmark2", "report", "publication", dataset_name],
-            mode="offline" if args.wandb_offline else "online",
+            mode=(
+                os.environ.get("WANDB_MODE", "").lower()
+                if os.environ.get("WANDB_MODE", "").lower() in {"disabled", "offline", "online"}
+                else ("offline" if args.wandb_offline else "online")
+            ),
             reinit="finish_previous",
             config={
                 "output_dir": str(args.output_dir),
@@ -2031,6 +2086,10 @@ def main():
     parser.add_argument("--real-test-dir", type=str, default="data/S7_pure_real",
                         help="Directory of real measurements for tier 6 "
                              "(must contain test/<class>/*.npy)")
+    parser.add_argument("--num-workers", type=int, default=4,
+                        help="DataLoader worker processes (default: 4; use 0 when sockets/forking are restricted)")
+    parser.add_argument("--skip-existing", action="store_true",
+                        help="Reuse existing run JSONs instead of retraining matching model/tier/seed combos")
     parser.add_argument("--sanity-check", action="store_true",
                         help="Run sanity checks before benchmark")
     parser.add_argument("--aggregate-only", action="store_true",

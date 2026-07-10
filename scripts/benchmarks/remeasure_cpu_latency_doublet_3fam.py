@@ -6,19 +6,19 @@ Phases:
      consumed by plot_doublet_comparison.py.
   3. Re-execute the two plot scripts via subprocess.
 
-The checkpoints in output/<model>-dataset_doublet-train/ are zoo baseline models
-(3 classes, trained with architecture-specific kwargs such as kernel_size=7 for
-ResNet1D). They are loaded via model.pth.tar (full serialised model object) to
-recover the exact architecture without guessing non-default constructor kwargs.
-Latency is then measured by feeding a dummy tensor of shape (1, 1, input_length)
-through the loaded backbone; the 3-class head contributes negligible compute
-relative to the backbone.
+The checkpoints in outputs/training/output/<model>-dataset_doublet-train/ are
+zoo baseline models (3 classes, trained with architecture-specific kwargs such
+as kernel_size=7 for ResNet1D). They are loaded via model.pth.tar (full
+serialised model object) to recover the exact architecture without guessing
+non-default constructor kwargs. Latency is then measured by feeding a dummy
+tensor of shape (1, 1, input_length) through the loaded backbone; the 3-class
+head contributes negligible compute relative to the backbone.
 
 CLI flags:
   --dry-run     Validate mapping and instantiate models; no measurement, no writes.
   --no-replot   Skip Phase 3 (subprocess plot regeneration).
   --rt-data     Override path to _rt_data.json
-                (default: results/doublet_3fam_retrained/_rt_data.json).
+                (default: outputs/benchmarks/results/doublet_3fam_retrained/_rt_data.json).
 """
 
 import argparse
@@ -32,7 +32,7 @@ from typing import Any
 import torch
 
 # ── Ensure project root is on sys.path ────────────────────────────────────────
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
@@ -46,8 +46,9 @@ NUM_CLASSES_DOUBLET: int = 2        # binary: doublet / non-doublet (unused for 
 
 COMPARISON_FAMILIES: list[str] = ["Conv1DGAP", "ResNet1D", "EfficientNet1D"]
 
-DEFAULT_RT_DATA = Path("results/doublet_3fam_retrained/_rt_data.json")
-LAT_COMPARISON_PATH = Path("results/doublet_3fam_retrained/_lat_comparison.json")
+DEFAULT_RT_DATA = Path(
+    "outputs/benchmarks/results/doublet_3fam_retrained/_rt_data.json"
+)
 
 WARMUP: int = 20
 N_RUNS: int = 200
@@ -57,6 +58,11 @@ N_RUNS: int = 200
 
 def _tar_path(model_name: str) -> Path:
     """Return the full-model archive path for a given model_name."""
+    canonical = Path(
+        f"outputs/training/output/{model_name}-dataset_doublet-train/model.pth.tar"
+    )
+    if canonical.exists():
+        return canonical
     return Path(f"output/{model_name}-dataset_doublet-train/model.pth.tar")
 
 
@@ -144,7 +150,7 @@ def phase1_patch_rt_data(rt_data_path: Path, dry_run: bool) -> None:
 
 # ── Phase 2: generate _lat_comparison.json ────────────────────────────────────
 
-def phase2_generate_lat_comparison(dry_run: bool) -> None:
+def phase2_generate_lat_comparison(lat_comparison_path: Path, dry_run: bool) -> None:
     """Measure latency at 625 and 4096 for the 3 base families."""
     lat_before: dict[str, float] = {}
     lat_after: dict[str, float] = {}
@@ -189,11 +195,11 @@ def phase2_generate_lat_comparison(dry_run: bool) -> None:
         "input_length_before": INPUT_LENGTH_BEFORE,
         "input_length_after": INPUT_LENGTH_AFTER,
     }
-    LAT_COMPARISON_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(LAT_COMPARISON_PATH, "w") as f:
+    lat_comparison_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lat_comparison_path, "w") as f:
         json.dump(comparison, f, indent=2)
         f.write("\n")
-    print(f"[INFO] Wrote {LAT_COMPARISON_PATH}")
+    print(f"[INFO] Wrote {lat_comparison_path}")
 
 
 # ── Phase 3: re-run plot scripts ──────────────────────────────────────────────
@@ -201,8 +207,8 @@ def phase2_generate_lat_comparison(dry_run: bool) -> None:
 def phase3_replot() -> None:
     """Re-execute the two plot scripts via subprocess."""
     scripts = [
-        "scripts/plot_realtime_factor_doublet.py",
-        "scripts/plot_doublet_comparison.py",
+        "scripts/plotting/plot_realtime_factor_doublet.py",
+        "scripts/plotting/plot_doublet_comparison.py",
     ]
     for script in scripts:
         print(f"[INFO] Running {script} ...")
@@ -251,7 +257,10 @@ def main() -> int:
     print("=" * 60)
     print(f"Phase 2: {'[DRY-RUN] ' if dry_run else ''}Generate _lat_comparison.json")
     print("=" * 60)
-    phase2_generate_lat_comparison(dry_run=dry_run)
+    phase2_generate_lat_comparison(
+        rt_data_path.parent / "_lat_comparison.json",
+        dry_run=dry_run,
+    )
 
     if not dry_run and not args.no_replot:
         print()

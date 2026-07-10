@@ -198,7 +198,7 @@ def main():
 
         run_post_testing(run, model, test_loader, criterion, device, CLASS_NAMES)
 
-        # ── Inference latency (CPU canonical, see doc/metrics_conventions.md) ──
+        # ── Inference latency (CPU canonical, see docs/metrics_conventions.md) ──
         latency = measure_cpu_latency(model, (1, 1, input_length))
         run.summary["inference_latency_median_ms"] = latency["median_ms"]
         run.summary["inference_latency_p95_ms"] = latency["p95_ms"]

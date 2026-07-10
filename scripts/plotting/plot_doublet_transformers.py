@@ -22,20 +22,33 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from benchmark_zoo import FAMILY_COLORS, FAMILY_MARKERS, _emit_pdf  # noqa: E402
 from p0.plotting import DCOL_W, apply_publication_style  # noqa: E402
 
 
-OUT_DIR = Path("results/doublet_transformers_retrained_lr1e4")
+OUT_DIR = _PROJECT_ROOT / "outputs/benchmarks/results/doublet_transformers_retrained_lr1e4"
 LAT_REMEASURE = OUT_DIR / "_latency_remeasure.json"
 
 MODELS = ["PatchTST", "Swin1D"]
 DISPLAY = {"PatchTST": "PatchTST", "Swin1D": "Swin-1D"}
 SIGNAL_DURATION_MS = 8.192
+SIZE_ORDER = {"Nano": 0, "XXS": 1, "XS": 2, "S": 3, "M": 4, "L": 5}
+
+FAMILY_COLORS = {
+    "PatchTST": "#332288",
+    "Swin1D": "#CC79A7",
+}
+
+
+def _emit_pdf(fig, figures_dir: Path, fname: str) -> None:
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    out = figures_dir / fname
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"  Saved {out}")
 
 # Long-sequence accuracy for checkpoints trained on short sequences.
 ACC_BEFORE = {
@@ -47,6 +60,45 @@ ACC_BEFORE = {
 def _load_json(path: Path) -> dict:
     with open(path) as f:
         return json.load(f)
+
+
+def _rt_entry_from_run(run: dict) -> dict:
+    latency_ms = run["latency_median_ms"]
+    return {
+        "model_name": run["model_name"],
+        "family": run["model_family"],
+        "stage": "Retrained",
+        "size_tag": run.get("model_size_tag", "M"),
+        "params": run.get("params"),
+        "macs": run.get("macs"),
+        "latency_ms": latency_ms,
+        "latency_p95_ms": run.get("latency_p95_ms"),
+        "accuracy": run["accuracy"],
+        "rt_factor": SIGNAL_DURATION_MS / latency_ms,
+        "latency_device": run.get("latency_device", "cpu"),
+    }
+
+
+def _load_retrained_rt_entries() -> list[dict]:
+    entries = []
+    for path in sorted((OUT_DIR / "runs").glob("*.json")):
+        run = _load_json(path)
+        if run.get("model_family") not in set(MODELS):
+            continue
+        if run.get("tier") != 1 or run.get("seed") != 42:
+            continue
+        if run.get("input_length") != 4096:
+            continue
+        entries.append(_rt_entry_from_run(run))
+
+    return sorted(
+        entries,
+        key=lambda e: (
+            MODELS.index(e["family"]),
+            SIZE_ORDER.get(e.get("size_tag", "M"), 99),
+            e["model_name"],
+        ),
+    )
 
 
 def _load_inputs() -> tuple[dict, dict, dict, list[dict]]:
@@ -74,7 +126,6 @@ def _load_inputs() -> tuple[dict, dict, dict, list[dict]]:
     rt_entries = []
     for model in MODELS:
         short_long_lat = lat[f"{model}:short_4096"]["median_ms"]
-        retrained_lat = lat_after[model]
         rt_entries.extend([
             {
                 "model_name": f"{model} short-trained",
@@ -85,16 +136,8 @@ def _load_inputs() -> tuple[dict, dict, dict, list[dict]]:
                 "rt_factor": SIGNAL_DURATION_MS / short_long_lat,
                 "latency_device": "cpu",
             },
-            {
-                "model_name": f"{model} retrained",
-                "family": model,
-                "stage": "Retrained",
-                "latency_ms": retrained_lat,
-                "accuracy": acc_after[model],
-                "rt_factor": SIGNAL_DURATION_MS / retrained_lat,
-                "latency_device": "cpu",
-            },
         ])
+    rt_entries.extend(_load_retrained_rt_entries())
     return lat_before, lat_after, acc_after, rt_entries
 
 
@@ -185,53 +228,68 @@ def _plot_comparison(lat_before: dict, lat_after: dict, acc_after: dict) -> None
 
 def _plot_realtime(rt_entries: list[dict]) -> None:
     apply_publication_style()
-    fig, ax = plt.subplots(figsize=(DCOL_W, 3.05))
+    entries = sorted(rt_entries, key=lambda e: e["rt_factor"])
+    labels = [
+        f"{DISPLAY.get(e['family'], e['family'])} {e['stage'].lower()}"
+        for e in entries
+    ]
+    rho = np.array([e["rt_factor"] for e in entries])
+    colors = [FAMILY_COLORS.get(e["family"], "#333333") for e in entries]
+    hatches = ["" if e["stage"] == "Retrained" else "///" for e in entries]
 
-    for model in MODELS:
-        entries = [e for e in rt_entries if e["family"] == model]
-        x = [e["rt_factor"] for e in entries]
-        y = [e["accuracy"] * 100 for e in entries]
-        color = FAMILY_COLORS.get(model, "#333333")
-        marker = FAMILY_MARKERS.get(model, "o")
-        ax.plot(x, y, color=color, linewidth=1.0, alpha=0.8, zorder=2)
-        for e in entries:
-            filled = e["stage"] == "Retrained"
-            ax.scatter(
-                e["rt_factor"], e["accuracy"] * 100,
-                s=48, marker=marker,
-                facecolor=color if filled else "white",
-                edgecolor=color, linewidth=1.0,
-                label=f"{DISPLAY[model]} {e['stage']}",
-                zorder=3,
-            )
-            ax.annotate(
-                e["stage"], xy=(e["rt_factor"], e["accuracy"] * 100),
-                xytext=(6, 5), textcoords="offset points",
-                fontsize=6.5, color="0.20",
-            )
+    fig_h = max(2.4, 0.34 * len(entries) + 1.15)
+    fig, ax = plt.subplots(figsize=(DCOL_W * 0.78, fig_h))
+    y_pos = np.arange(len(entries))
+    bars = ax.barh(
+        y_pos, rho,
+        color=colors, edgecolor="white", linewidth=0.6,
+        zorder=3,
+    )
+    for bar, hatch in zip(bars, hatches):
+        if hatch:
+            bar.set_hatch(hatch)
 
-    rho_lo = min(e["rt_factor"] for e in rt_entries) * 0.7
-    rho_hi = max(e["rt_factor"] for e in rt_entries) * 1.8
-    ax.axvspan(rho_lo, 1.0, alpha=0.10, color="0.45", zorder=1)
+    ax.axvspan(0, 1.0, alpha=0.10, color="0.45", zorder=1)
     ax.axvline(1.0, color="black", linestyle="--", linewidth=0.8, zorder=4)
     ax.text(1.0, 1.02, r"$\rho = 1$", transform=ax.get_xaxis_transform(),
             fontsize=7, color="0.25", va="bottom", ha="center", style="italic")
-    ax.set_xscale("log")
-    ax.set_xlim(rho_lo, rho_hi)
-    ax.set_ylim(40, 95)
+
+    x_pad = max(rho.max() * 0.012, 0.01)
+    for yi, value in zip(y_pos, rho):
+        ax.text(
+            value + x_pad, yi, f"{value:.3f}",
+            va="center", ha="left", fontsize=7, color="0.15",
+        )
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(labels)
+    ax.set_xlim(0, max(rho.max() * 1.18, 2.0))
     ax.set_xlabel(
-        r"Real-time factor  $\rho = N_\mathrm{point} / (\tau \cdot f_s)$  [log scale]"
+        r"$\rho = N_\mathrm{point} / (\tau \cdot f_s)$"
+        rf"   ($N_\mathrm{{point}}/f_s = {SIGNAL_DURATION_MS:.3f}$ ms)"
     )
-    ax.set_ylabel("Long-sequence accuracy (%)")
-    ax.grid(True, which="major", alpha=0.30, linewidth=0.4)
-    ax.grid(True, which="minor", alpha=0.12, linewidth=0.3)
+    ax.grid(True, axis="x", which="both", alpha=0.30, linewidth=0.4)
+    ax.set_axisbelow(True)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
-    ax.legend(loc="lower right", frameon=True, framealpha=0.85, fontsize=7)
-    ax.text(0.99, 0.01, "CPU torch, batch = 1",
+
+    ax.text(0.99, 0.02, "CPU torch, batch=1",
             transform=ax.transAxes, ha="right", va="bottom",
-            fontsize=6, color="0.50", style="italic")
-    fig.subplots_adjust(left=0.09, right=0.98, top=0.92, bottom=0.14)
+            fontsize=6, color="0.35", style="italic",
+            bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                      edgecolor="0.7", alpha=0.85))
+
+    fig.legend(
+        handles=[
+            plt.Rectangle((0, 0), 1, 1, facecolor="0.75", edgecolor="white",
+                          hatch="///", label="Short-trained"),
+            plt.Rectangle((0, 0), 1, 1, facecolor="0.35", edgecolor="white",
+                          label="Retrained"),
+        ],
+        loc="lower center", ncol=2, frameon=False, bbox_to_anchor=(0.5, 0.015),
+        fontsize=7, handlelength=1.4, columnspacing=1.6,
+    )
+    fig.subplots_adjust(left=0.31, right=0.97, top=0.90, bottom=0.27)
     _emit_pdf(fig, OUT_DIR, "realtime_factor_doublet_3fam.pdf")
 
 

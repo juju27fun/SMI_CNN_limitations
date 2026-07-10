@@ -15,7 +15,11 @@ from models.inception1d import InceptionTime1D
 from models.mobilenet1d import MobileNet1D
 from models.efficientnet1d import EfficientNet1D
 from models.densenet1d import DenseNet1D
-from models.transformer1d_classifiers import PatchTSTClassifier, Swin1DClassifier
+from models.transformer1d_classifiers import (
+    PatchTSTClassifier,
+    PatchTSTPretrainedClassifier,
+    Swin1DClassifier,
+)
 
 MODEL_REGISTRY = {
     "Conv1DGAP": Conv1DGAPClassifier,
@@ -27,6 +31,8 @@ MODEL_REGISTRY = {
     "DenseNet1D": DenseNet1D,
     "Swin1D": Swin1DClassifier,
     "PatchTST": PatchTSTClassifier,
+    "PatchTSTPretrained": PatchTSTPretrainedClassifier,
+    "PatchTSTPretrained-Frozen": PatchTSTPretrainedClassifier,
 }
 
 # Scaling variants for accuracy-vs-capacity curves.
@@ -86,9 +92,24 @@ MODEL_VARIANTS = {
     "DenseNet1D-S":      (DenseNet1D, {"growth_rate": 20, "init_channels": 32}),
     "DenseNet1D":        (DenseNet1D, {}),
     "DenseNet1D-L":      (DenseNet1D, {"growth_rate": 80, "init_channels": 128}),
-    # Transformer families imported from P1 backbones.
+    # Transformer families imported from P1 backbones.  Variants scale both
+    # token width and classification head width while keeping the same patch
+    # geometry as the base models, so Tier-1 scaling remains comparable.
+    "Swin1D-Nano":       (Swin1DClassifier, {"embed_dim": 16, "depths": (1, 1, 1), "num_heads": (1, 2, 4), "proj_channels": 64, "hidden_dim": 64, "drop_path_rate": 0.02}),
+    "Swin1D-XXS":        (Swin1DClassifier, {"embed_dim": 24, "depths": (1, 1, 2), "num_heads": (1, 2, 4), "proj_channels": 96, "hidden_dim": 64, "drop_path_rate": 0.04}),
+    "Swin1D-XS":         (Swin1DClassifier, {"embed_dim": 32, "depths": (1, 2, 2), "num_heads": (1, 2, 4), "proj_channels": 128, "hidden_dim": 96, "drop_path_rate": 0.06}),
+    "Swin1D-S":          (Swin1DClassifier, {"embed_dim": 48, "depths": (2, 2, 2), "num_heads": (2, 4, 8), "proj_channels": 192, "hidden_dim": 128, "drop_path_rate": 0.08}),
     "Swin1D":            (Swin1DClassifier, {}),
+    "Swin1D-L":          (Swin1DClassifier, {"embed_dim": 96, "depths": (2, 3, 3), "num_heads": (3, 6, 12), "proj_channels": 384, "hidden_dim": 192, "drop_path_rate": 0.15}),
+    "PatchTST-Nano":     (PatchTSTClassifier, {"embed_dim": 32, "depth": 2, "num_heads": 2, "proj_channels": 64, "hidden_dim": 64}),
+    "PatchTST-XXS":      (PatchTSTClassifier, {"embed_dim": 48, "depth": 3, "num_heads": 3, "proj_channels": 96, "hidden_dim": 64}),
+    "PatchTST-XS":       (PatchTSTClassifier, {"embed_dim": 64, "depth": 4, "num_heads": 4, "proj_channels": 128, "hidden_dim": 96}),
+    "PatchTST-S":        (PatchTSTClassifier, {"embed_dim": 96, "depth": 5, "num_heads": 4, "proj_channels": 192, "hidden_dim": 128}),
+    "PatchTST-Compact":  (PatchTSTClassifier, {"embed_dim": 96}),
     "PatchTST":          (PatchTSTClassifier, {}),
+    "PatchTST-L":        (PatchTSTClassifier, {"embed_dim": 192, "depth": 8, "num_heads": 6, "proj_channels": 384, "hidden_dim": 192}),
+    "PatchTSTPretrained-Frozen": (PatchTSTPretrainedClassifier, {"finetune_mode": "linear_probe"}),
+    "PatchTSTPretrained": (PatchTSTPretrainedClassifier, {"finetune_mode": "full"}),
 }
 
 # Auto-build family map by stripping size suffix

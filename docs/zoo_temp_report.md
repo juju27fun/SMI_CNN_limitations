@@ -33,7 +33,7 @@
 >    clipped y-window, kernel-launch floor shading, numbered Pareto
 >    badges with a lower-right side-key table, and iso-accuracy guides
 >    on the right edge. See §3.9 for the full rationale and
->    `doc/variant_plotting.md` §3.4 for the design notes.
+>    `docs/variant_plotting.md` §3.4 for the design notes.
 
 ---
 
@@ -541,7 +541,7 @@ bundled as a `benchmark2-report` artifact.
 - **Why.** Sanity checks to make sure the aggregated metrics in the
   publication figures actually reflect the per-class behaviour. These
   are intentionally raster PNGs to make it obvious they are *not* part
-  of the paper's figure set (see `doc/variant_plotting.md` §8.5).
+  of the paper's figure set (see `docs/variant_plotting.md` §8.5).
 - **Interpret.**
   - Confusion matrices — pick out class confusions the scalar accuracy
     hides (typically 2 µm ↔ 4 µm on this dataset).

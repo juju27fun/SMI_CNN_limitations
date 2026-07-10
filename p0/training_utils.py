@@ -10,8 +10,12 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import wandb
 from sklearn.metrics import classification_report, confusion_matrix
+
+try:
+    import wandb
+except ImportError:  # pragma: no cover - exercised on lean training envs.
+    wandb = None
 
 from p0.models import list_models
 from p0.training import evaluate, train_one_epoch

@@ -1,26 +1,13 @@
 """Doublet real-time factor (ρ) figure — accuracy vs ρ scatter.
 
-Reproduces ``results/doublet_3fam_retrained/realtime_factor_doublet_3fam.pdf``
-from ``_rt_data.json``, aligning the typography and the ρ = 1 demarcation
-with P1's ``detseg/plotting.py:generate_real_time_factor`` so the two
-figures sit side-by-side cleanly in a conjoined paper:
-
-- Linear x-axis (was log), so the saturation threshold at ρ = 1 reads
-  as a real visual cut rather than collapsing onto log(1) = 0.
-- Saturated zone (ρ < 1) shaded in light grey + dashed threshold line
-  + "ρ = 1" annotation in the top margin (matches P1).
-- ρ = N_point / (τ · f_s) notation (was N_raw / (f_acq · t_median)) so
-  the symbols are identical across both papers.
-- pub_utils.PUB_RC font/size already match P1's PUB_RC; nothing more
-  to do for typography beyond ``apply_publication_style()``.
-
-The chart-type cannot match P1 exactly (P1's bar form would be
-unreadable at 19 points) so this stays a scatter, but every other
-visual element follows the P1 RTF convention.
+Regenerates
+``outputs/benchmarks/results/doublet_3fam_retrained/realtime_factor_doublet_3fam.pdf``
+from the retrained CNN-family data and the retrained transformer data. Family
+symbols follow benchmark2 color/marker/linestyle conventions.
 
 Usage
 -----
-    python scripts/plot_realtime_factor_doublet.py
+    python scripts/plotting/plot_realtime_factor_doublet.py
 """
 
 import json
@@ -29,21 +16,30 @@ from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
+import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from benchmark_zoo import FAMILY_COLORS, FAMILY_MARKERS, _emit_pdf  # noqa: E402
+from p0.benchmark_style import FAMILY_COLORS, FAMILY_MARKERS, FAMILY_LINESTYLES  # noqa: E402
 from p0.plotting import apply_publication_style, DCOL_W  # noqa: E402
 
 
-FAMILIES = ["Conv1DGAP", "EfficientNet1D", "ResNet1D"]
-DATA_JSON = Path("results/doublet_3fam_retrained/_rt_data.json")
-OUT_DIR = Path("results/doublet_3fam_retrained")
+FAMILIES = ["Conv1DGAP", "EfficientNet1D", "ResNet1D", "PatchTST", "Swin1D"]
+DISPLAY = {"PatchTST": "PatchTST", "Swin1D": "Swin-1D"}
+SIZE_ORDER = {"Pico": 0, "Nano": 1, "XXS": 2, "XS": 3, "S": 4, "M": 5, "L": 6}
+CNN_DATA_JSON = (
+    _PROJECT_ROOT / "outputs/benchmarks/results/doublet_3fam_retrained/_rt_data.json"
+)
+TRANSFORMER_DATA_JSON = (
+    _PROJECT_ROOT
+    / "outputs/benchmarks/results/doublet_transformers_retrained_lr1e4/_rt_data.json"
+)
+OUT_DIR = _PROJECT_ROOT / "outputs/benchmarks/results/doublet_3fam_retrained"
 OUT_NAME = "realtime_factor_doublet_3fam.pdf"
 
 
@@ -62,6 +58,57 @@ def _pareto_front(rho, acc):
     return sorted(front, key=lambda i: rho[i])
 
 
+def _display_family(family):
+    return DISPLAY.get(family, family)
+
+
+def _stage(entry):
+    return entry.get("stage", "Retrained")
+
+
+def _size_tag(entry):
+    if "size_tag" in entry:
+        return entry["size_tag"]
+    name = entry["model_name"]
+    for tag in ("Pico", "Nano", "XXS", "XS", "S", "L"):
+        if name.endswith(f"-{tag}"):
+            return tag
+    return "M"
+
+
+def _save_pdf(fig, out_dir, out_name):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / out_name
+    fig.savefig(out_path)
+    plt.close(fig)
+    return out_path
+
+
+def _load_entries():
+    for path in (CNN_DATA_JSON, TRANSFORMER_DATA_JSON):
+        if not path.exists():
+            raise FileNotFoundError(f"Missing {path}")
+
+    with open(CNN_DATA_JSON) as f:
+        cnn_entries = json.load(f)
+    with open(TRANSFORMER_DATA_JSON) as f:
+        transformer_entries = json.load(f)
+
+    entries = []
+    for entry in cnn_entries:
+        if entry["family"] not in {"Conv1DGAP", "EfficientNet1D", "ResNet1D"}:
+            continue
+        merged = dict(entry)
+        merged.setdefault("stage", "Retrained")
+        entries.append(merged)
+
+    for entry in transformer_entries:
+        if entry["family"] in {"PatchTST", "Swin1D"} and _stage(entry) == "Retrained":
+            entries.append(dict(entry))
+
+    return entries
+
+
 def _make_figure(entries):
     apply_publication_style()
     rho = np.array([e["rt_factor"] for e in entries])
@@ -69,7 +116,7 @@ def _make_figure(entries):
     fams = [e["family"] for e in entries]
     names = [e["model_name"] for e in entries]
 
-    fig, ax = plt.subplots(figsize=(DCOL_W, 3.2))
+    fig, ax = plt.subplots(figsize=(DCOL_W, 3.35))
 
     # ── Saturated zone (ρ < 1) + ρ = 1 threshold. Log scale spreads the
     # 3-decade dynamic range (0.1 → 105) that the CPU latencies introduce;
@@ -83,17 +130,52 @@ def _make_figure(entries):
         fontsize=7, color="0.25", va="bottom", ha="center", style="italic",
     )
 
-    # ── Per-family scatter
+    # ── Per-family scatter using benchmark2 family symbols.
     for fam in FAMILIES:
-        mask = [f == fam for f in fams]
-        if not any(mask):
+        idx = [i for i, f in enumerate(fams) if f == fam]
+        if not idx:
             continue
-        ax.scatter(
-            rho[mask], acc[mask],
-            s=42, color=FAMILY_COLORS.get(fam, "#333"),
-            marker=FAMILY_MARKERS.get(fam, "o"),
-            edgecolor="white", linewidth=0.4, label=fam, zorder=3,
-        )
+        color = FAMILY_COLORS.get(fam, "#333")
+        marker = FAMILY_MARKERS.get(fam, "o")
+
+        for i in idx:
+            ax.scatter(
+                rho[i], acc[i],
+                s=46,
+                facecolor=color,
+                edgecolor="white",
+                marker=marker,
+                linewidth=0.4,
+                label=fam,
+                zorder=3,
+            )
+
+        if fam in {"PatchTST", "Swin1D"}:
+            ordered_idx = sorted(
+                idx,
+                key=lambda i: (
+                    SIZE_ORDER.get(_size_tag(entries[i]), 99),
+                    entries[i].get("params") or 0,
+                ),
+            )
+            ax.plot(
+                rho[ordered_idx], acc[ordered_idx],
+                color=color,
+                linestyle=FAMILY_LINESTYLES.get(fam, "-"),
+                linewidth=1.0,
+                alpha=0.75,
+                zorder=2,
+            )
+            for j, i in enumerate(ordered_idx):
+                label = _size_tag(entries[i])
+                dx = 6
+                dy = 5 if j % 2 == 0 else -9
+                ax.annotate(
+                    label, xy=(rho[i], acc[i]), xytext=(dx, dy),
+                    textcoords="offset points", fontsize=6.1, color="0.18",
+                    ha="left", va="bottom" if dy > 0 else "top",
+                    linespacing=0.95, zorder=6,
+                )
 
     # ── Pareto front + badges + side-key
     front_idx = _pareto_front(rho, acc)
@@ -144,7 +226,7 @@ def _make_figure(entries):
         r"Real-time factor  $\rho = N_\mathrm{point} / (\tau \cdot f_s)$  [log scale]"
     )
     ax.set_ylabel("Accuracy (%)")
-    ax.set_ylim(60, 100)
+    ax.set_ylim(40, 100)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(True, which="major", alpha=0.30, linewidth=0.4)
@@ -154,10 +236,26 @@ def _make_figure(entries):
     # Family legend in lower-left, inside the saturated (ρ < 1) zone where
     # only Pareto-dominated points sit — keeps the high-acc band clear for
     # the front + side-key, and the lower-right empty for Conv1DGAP-Nano/Pico.
-    ax.legend(
-        loc="lower left", bbox_to_anchor=(0.02, 0.03),
+    plotted_families = [fam for fam in FAMILIES if fam in set(fams)]
+    family_handles = [
+        Line2D(
+            [0], [0],
+            color=FAMILY_COLORS.get(fam, "#333"),
+            marker=FAMILY_MARKERS.get(fam, "o"),
+            linestyle=FAMILY_LINESTYLES.get(fam, "-"),
+            linewidth=1.0,
+            markersize=4.5,
+            markeredgecolor=FAMILY_COLORS.get(fam, "#333"),
+            markerfacecolor=FAMILY_COLORS.get(fam, "#333"),
+            label=_display_family(fam),
+        )
+        for fam in plotted_families
+    ]
+    family_legend = ax.legend(
+        handles=family_handles,
+        loc="lower right", bbox_to_anchor=(0.98, 0.03),
         frameon=True, framealpha=0.85, fontsize=7,
-        handletextpad=0.4, borderaxespad=0.4,
+        handletextpad=0.4, borderaxespad=0.4, ncol=1,
     )
 
     ax.text(
@@ -171,22 +269,15 @@ def _make_figure(entries):
 
 
 def main():
-    if not DATA_JSON.exists():
-        print(f"Missing {DATA_JSON}", file=sys.stderr)
+    try:
+        entries = _load_entries()
+    except FileNotFoundError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
-    entries = [e for e in json.load(open(DATA_JSON)) if e["family"] in FAMILIES]
+
     fig = _make_figure(entries)
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    _emit_pdf(
-        fig, OUT_DIR, OUT_NAME, wandb_run=None,
-        caption=(
-            "Doublet test accuracy vs real-time factor "
-            r"$\rho = N_\mathrm{point} / (\tau \cdot f_s)$ for three "
-            "model families. Dashed line at ρ = 1 marks the saturation "
-            "threshold; shaded zone marks ρ < 1 (saturated)."
-        ),
-    )
-    print(f"Wrote {OUT_DIR / OUT_NAME}")
+    out_path = _save_pdf(fig, OUT_DIR, OUT_NAME)
+    print(f"Wrote {out_path}")
     return 0
 
 

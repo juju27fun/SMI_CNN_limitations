@@ -33,10 +33,12 @@ It now separates code, data, generated outputs, and historical material.
 ## Compatibility
 
 Former high-use Python commands are kept as root wrapper files, so commands such
-as `python train4classes.py` work without setting `PYTHONPATH`. Data, output,
-and environment compatibility paths may still be symlinks. Reusable Python code
-should prefer `p0.*` imports; legacy imports such as `from training_utils import
-measure_cpu_latency` remain supported for P1 compatibility.
+as `python train4classes.py` work without setting `PYTHONPATH`. Data and output
+compatibility symlinks were retired on 2026-06-29 to keep the repository root
+clean; use canonical `data/...` and `outputs/...` paths instead. Reusable Python
+code should prefer `p0.*` imports; legacy imports such as
+`from training_utils import measure_cpu_latency` remain supported for P1
+compatibility.
 
 ## Root command wrappers
 
