@@ -17,7 +17,7 @@ results/
 artifacts/
 audit_results/
 logs/
-wandb/
+/wandb/
 .netrc
 
 *_full_analysis/
