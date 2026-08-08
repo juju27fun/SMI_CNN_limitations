@@ -1,15 +1,14 @@
-# SMI CNN Limitations agent context
+# P0 classification contract
 
-- Treat this directory as an independent Git repository inside the parent
-  workspace; also obey the workspace-root `AGENTS.md`.
-- Reusable classification code belongs in `p0/`; CLIs belong in the existing
-  `scripts/{training,benchmarks,analysis,audit,datasets,plotting}/` groups.
-- Import models from `p0.models` and shared helpers from installed packages. Do
-  not restore root wrappers or add `sys.path` manipulation.
-- Resolve input through the workspace dataset registry. Do not create `data/`,
-  `outputs/`, a local venv, or a project-local model cache.
-- Write runs to `artifacts/SMI_CNN_limitations/<run-id>/` with a `run.json`.
-- Run `.venv/bin/python -m pytest -q SMI_CNN_limitations/tests` from the
-  workspace root. Use only small CPU smoke checks for organizational changes.
-- Before pfcalcul work, read `docs/operations/pfcalcul/current-state.md` and
-  `docs/operations/pfcalcul/runbook.md` at the workspace root.
+- If `../workspace-repos.lock` exists, read `../AGENTS.md` first; Git roots do
+  not inherit parent instructions.
+- Put reusable code in `p0/` and CLIs in
+  `scripts/{training,benchmarks,analysis,audit,datasets,plotting}`. Import
+  `p0.models` and installed packages; never restore wrappers or inject paths.
+- Resolve registered dataset IDs. Do not create local data/output trees, venvs,
+  or caches. From the workspace root, write manifested runs only under
+  `artifacts/SMI_CNN_limitations/<run-id>/`.
+- For specialized work, read the matching `.agents/skills/*/SKILL.md`.
+- Verify from the workspace root with
+  `.venv/bin/python -m pytest -q SMI_CNN_limitations/tests` and CPU-only smoke
+  checks. Before pfcalcul work, read the root current-state and runbook.
