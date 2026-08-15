@@ -9,6 +9,7 @@ hook-based feature extraction in the training pipeline.
 """
 
 from p0.models.conv1d_gap import Conv1DGAPClassifier
+from p0.models.proposal_aware_roi import ProposalAwareROIClassifier
 from p0.models.convnext1d import ConvNeXt1D
 from p0.models.resnet1d import ResNet1D
 from p0.models.inception1d import InceptionTime1D

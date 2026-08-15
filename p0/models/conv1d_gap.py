@@ -52,7 +52,14 @@ class Conv1DGAPClassifier(nn.Module):
         self.drop_fc = nn.Dropout(0.5)
         self.fc2 = nn.Linear(fc_hidden, num_classes)
 
-    def forward(self, x):
+    def forward_features(self, x):
+        """Return the shared latent representation before the classifier.
+
+        The method is intentionally the exact prefix historically used by
+        :meth:`forward`, including dropout.  Existing checkpoints and forward
+        outputs therefore remain unchanged while multi-head consumers can
+        reuse the encoder without hooks.
+        """
         # Input shape: (batch, 1, seq_len) - 1D signal format
         x = F.relu(self.bn1(self.conv1(x)))
         x = self.drop1(self.pool1(x))
@@ -67,5 +74,7 @@ class Conv1DGAPClassifier(nn.Module):
         x = self.flatten(x)
         x = F.relu(self.fc1(x))
         x = self.drop_fc(x)
-        x = self.fc2(x)
         return x
+
+    def forward(self, x):
+        return self.fc2(self.forward_features(x))
