@@ -134,3 +134,24 @@ def regional_top_mask(cam: np.ndarray, region: np.ndarray, fraction: float) -> n
     mask = np.zeros_like(region)
     mask[chosen] = True
     return mask
+
+
+def event_concentration(
+    cam: np.ndarray,
+    intervals: Sequence[tuple[float, float]],
+) -> dict[str, float]:
+    """Summarize temporal coverage and Grad-CAM mass inside event windows."""
+
+    cam = np.asarray(cam, dtype=float)
+    if cam.ndim != 1:
+        raise ValueError("cam must be one-dimensional")
+    mask = interval_mask(cam.size, intervals)
+    coverage = float(mask.mean())
+    total = float(cam.sum())
+    mass = float(cam[mask].sum() / total) if total > 0 and mask.any() else 0.0
+    enrichment = mass / coverage if coverage > 0 else float("nan")
+    return {
+        "temporal_coverage": coverage,
+        "cam_mass": mass,
+        "uniform_attention_enrichment": enrichment,
+    }

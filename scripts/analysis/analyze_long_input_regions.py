@@ -23,7 +23,7 @@ import torch
 
 from internship_workspace.visual_style import evidence_style, save_evidence_figure
 from p0.data import BandpassFilter, Decimate
-from p0.gradcam import regional_top_mask, temporal_gradcam, temporal_regions
+from p0.gradcam import event_concentration, regional_top_mask, temporal_gradcam, temporal_regions
 from p0.models import create_model
 
 
@@ -117,7 +117,7 @@ def bootstrap_median(values: list[float], rng: np.random.Generator, draws: int =
 def select_cases(rows: list[dict]) -> list[tuple[str, dict]]:
     strata = [
         ("Single reference event · correct", [r for r in rows if len(r["intervals"]) == 1 and r["correct"]], lambda r: (r["confidence"], r["filename"]), max),
-        ("Multiple reference events · uncertain correct", [r for r in rows if len(r["intervals"]) >= 2 and r["correct"]], lambda r: (r["margin"], r["filename"]), min),
+        ("Correct classification with two detected events", [r for r in rows if len(r["intervals"]) >= 2 and r["correct"]], lambda r: (r["margin"], r["filename"]), min),
         ("No reference interval · strongest edge transient", [r for r in rows if not r["intervals"] and r["correct"]], lambda r: (r["edge_artifact_score"], r["filename"]), max),
         ("Reference event · confident error", [r for r in rows if r["intervals"] and not r["correct"]], lambda r: (r["confidence"], r["filename"]), max),
         ("No reference interval · uncertain error", [r for r in rows if not r["intervals"] and not r["correct"]], lambda r: (r["margin"], r["filename"]), min),
@@ -132,44 +132,30 @@ def select_cases(rows: list[dict]) -> list[tuple[str, dict]]:
 
 def render(metrics: dict, cases: list[tuple[str, dict]], destination: Path) -> None:
     with evidence_style():
-        fig = plt.figure(figsize=(12.0, 10.2))
-        grid = fig.add_gridspec(3, 2, hspace=.48, wspace=.12)
-        fig.subplots_adjust(left=.07, right=.98, bottom=.10, top=.90)
-        for panel, (title, row) in enumerate(cases):
-            axis = fig.add_subplot(grid[panel // 2, panel % 2])
-            signal = np.asarray(row["signal"]); cam = np.asarray(row["cam"]); x = np.arange(INPUT_LENGTH)
-            scale = np.quantile(np.abs(signal), .995) or 1.0
-            axis.plot(x, signal / scale, color="#222222", linewidth=.55)
-            edge = int(INPUT_LENGTH * EDGE_FRACTION)
-            axis.axvspan(0, edge, color=REGION_COLORS["edge"], alpha=.10, linewidth=0)
-            axis.axvspan(INPUT_LENGTH-edge, INPUT_LENGTH, color=REGION_COLORS["edge"], alpha=.10, linewidth=0)
-            for start, end in row["intervals"]:
-                axis.axvspan(start * INPUT_LENGTH, end * INPUT_LENGTH, color=REGION_COLORS["event"], alpha=.17, linewidth=0)
-            axis.imshow(cam[None, :], extent=(0, INPUT_LENGTH, -1.65, -1.34), aspect="auto", cmap="Blues", vmin=0, vmax=1)
-            axis.set(xlim=(0, INPUT_LENGTH), ylim=(-1.7, 1.2), ylabel="scaled OFI")
-            axis.set_yticks([-1, 0, 1])
-            if panel < 3: axis.set_xticklabels([])
-            else: axis.set_xlabel("Decimated sample")
-            letter = chr(ord("a") + panel)
-            axis.set_title(f"{letter}  {title}\ntrue {row['class_name']} · pred. {CLASSES[row['pred']]} · p={row['confidence']:.2f}", loc="left", fontsize=9, fontweight="bold")
+        title, row = cases[1]
+        concentration = metrics["selected_two_event_case"]["event_concentration"]
+        fig, axis = plt.subplots(figsize=(11.2, 5.4))
+        fig.subplots_adjust(left=.09, right=.98, bottom=.16, top=.68)
+        signal = np.asarray(row["signal"])
+        cam = np.asarray(row["cam"])
+        x = np.arange(INPUT_LENGTH)
+        scale = np.quantile(np.abs(signal), .995) or 1.0
+        axis.plot(x, signal / scale, color="#222222", linewidth=.75)
+        for start, end in row["intervals"]:
+            axis.axvspan(start * INPUT_LENGTH, end * INPUT_LENGTH, color=REGION_COLORS["event"], alpha=.18, linewidth=0)
+        axis.imshow(cam[None, :], extent=(0, INPUT_LENGTH, -1.58, -1.30), aspect="auto", cmap="Blues", vmin=0, vmax=1)
+        axis.set(xlim=(0, INPUT_LENGTH), ylim=(-1.62, 1.18), xlabel="Decimated sample", ylabel="Scaled OFI")
+        axis.set_yticks([-1, 0, 1])
+        axis.tick_params(labelsize=12)
+        axis.xaxis.label.set_fontsize(12)
+        axis.yaxis.label.set_fontsize(12)
+        axis.grid(axis="x", alpha=.15, linewidth=.5)
 
-        summary_grid = grid[2, 1].subgridspec(1, 2, wspace=.38)
-        summary = fig.add_subplot(summary_grid[0, 0])
-        masking = fig.add_subplot(summary_grid[0, 1])
-        regions = ("event", "background", "edge")
-        y = np.arange(3)
-        enrich = [metrics["aggregate"][name]["cam_density_enrichment"]["median"] for name in regions]
-        drops = [metrics["aggregate"][name]["target_logit_drop_top2pct"]["median"] for name in regions]
-        summary.barh(y, enrich, color=[REGION_COLORS[name] for name in regions], alpha=.85)
-        summary.axvline(1, color="#555555", linestyle=":", linewidth=1)
-        summary.set_yticks(y, ["Event", "Background", "Edges"], fontsize=8); summary.invert_yaxis()
-        summary.set_xlabel("CAM density / coverage", fontsize=8); summary.set_title("f  Regional sensitivity", loc="left", fontsize=9, fontweight="bold")
-        masking.barh(y, drops, color=[REGION_COLORS[name] for name in regions], alpha=.55, hatch="//")
-        masking.set_yticks(y, []); masking.invert_yaxis(); masking.set_xlabel("Logit drop (fixed 2% mask)", fontsize=8)
-
-        fig.suptitle("Where does the long-input classifier look?", fontsize=15, fontweight="bold")
-        fig.text(.75, .025, f"Event regions: n={metrics['aggregate']['event']['cam_density_enrichment']['n']}; background/edges: n={metrics['n_test']}. Detector intervals are references, not ground truth.\nFixed-budget masking and Grad-CAM diagnose sensitivity, not causality.", ha="center", fontsize=7, color="#555555")
-        save_evidence_figure(fig, destination, visual_form="diagnostic", color_semantics={"#009E73": "detector-derived reference event", "#D55E00": "fixed record-edge band", "#7A7A7A": "remaining background", "#0072B2": "retrained Conv1D-GAP-S Grad-CAM"}, dpi=220)
+        fig.suptitle(title, x=.09, y=.96, ha="left", fontsize=18, fontweight="bold")
+        subtitle = fig.text(.09, .86, f"True class: {row['class_name']}   ·   Prediction: {CLASSES[row['pred']]}   ·   Confidence: {row['confidence']:.0%}", fontsize=12, color="#5B7088")
+        subtitle.set_gid("secondary")
+        fig.text(.98, .77, f"{concentration['temporal_coverage']:.1%} of signal  →  {concentration['cam_mass']:.1%} of Grad-CAM activation", ha="right", fontsize=18, fontweight="bold", color="#0B3558")
+        save_evidence_figure(fig, destination, visual_form="narrative", dominant_object="complete 4096-sample signal with two detected-event windows and one Grad-CAM ribbon", regions=2, color_semantics={"#009E73": "detector-derived event window", "#0072B2": "retrained Conv1D-GAP-S Grad-CAM"}, dpi=220)
         fig.savefig(destination.with_suffix(".pdf"), bbox_inches="tight", facecolor="white")
         plt.close(fig)
 
@@ -188,7 +174,7 @@ def main() -> None:
         cases = []
         for index, item in enumerate(metadata):
             row = dict(item["record"]); row["signal"] = arrays[f"signal_{index}"]; row["cam"] = arrays[f"cam_{index}"]; cases.append((item["title"], row))
-        render(metrics, cases, output / "chapter7_long_input_regions.png"); return
+        render(metrics, cases, output / "chapter7_two_event_gradcam.png"); return
 
     test_dir = source / "datasets/processed/doublet/v1/test"
     labels_dir = source / "datasets/processed/particles2snr-f-dual-clean-c1-yolo-3class/v1/test/labels"
@@ -205,7 +191,8 @@ def main() -> None:
         for metric in ("cam_density_enrichment", "target_logit_drop_top2pct"):
             aggregate[region][metric] = bootstrap_median([row["regions"][region][metric] for row in rows], rng)
     selected = select_cases(rows)
-    metrics = {"schema_version": 1, "dataset": "doublet@v1", "n_test": len(rows), "model": "Conv1DGAP-S", "checkpoint": str(checkpoint.relative_to(source)), "input_contract": {"raw_samples": RAW_LENGTH, "decimation": 4, "model_samples": INPUT_LENGTH, "edge_band_fraction_each_side": EDGE_FRACTION, "regional_mask_budget": MASK_BUDGET}, "aggregate": aggregate, "interpretation_boundary": "Detector-derived intervals are not ground truth. Grad-CAM and fixed-budget zero-mask logit drops diagnose sensitivity, not causal feature use."}
+    selected_two_event = selected[1][1]
+    metrics = {"schema_version": 1, "dataset": "doublet@v1", "n_test": len(rows), "model": "Conv1DGAP-S", "checkpoint": str(checkpoint.relative_to(source)), "input_contract": {"raw_samples": RAW_LENGTH, "decimation": 4, "model_samples": INPUT_LENGTH, "edge_band_fraction_each_side": EDGE_FRACTION, "regional_mask_budget": MASK_BUDGET}, "aggregate": aggregate, "selected_two_event_case": {"filename": selected_two_event["filename"], "true_class": selected_two_event["class_name"], "predicted_class": CLASSES[selected_two_event["pred"]], "confidence": selected_two_event["confidence"], "event_concentration": event_concentration(selected_two_event["cam"], selected_two_event["intervals"])}, "interpretation_boundary": "Detector-derived intervals are not ground truth. Grad-CAM diagnoses sensitivity concentration, not causal feature use; fixed-budget masking remains supporting evidence only."}
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n")
     cases_json = []
     arrays = {}
@@ -213,8 +200,8 @@ def main() -> None:
         record = {key: value for key, value in row.items() if key not in {"signal", "cam", "regions"}}
         cases_json.append({"title": title, "record": record}); arrays[f"signal_{index}"] = row["signal"]; arrays[f"cam_{index}"] = row["cam"]
     (output / "cases.json").write_text(json.dumps(cases_json, indent=2, sort_keys=True) + "\n"); np.savez_compressed(output / "case_arrays.npz", **arrays)
-    if not args.analysis_only: render(metrics, selected, output / "chapter7_long_input_regions.png")
-    provenance = {"datasets": ["doublet@v1", "particles2snr-f-dual-clean-c1-yolo-3class@v1"], "inputs": {"checkpoint_sha256": sha256(checkpoint)}, "parameters": {"seed": SEED, "edge_fraction_each_side": EDGE_FRACTION, "regional_mask_budget": MASK_BUDGET, "input_length": INPUT_LENGTH}, "metric_definitions": {"cam_density_enrichment": "regional CAM mass fraction divided by regional time coverage", "target_logit_drop_top2pct": "predicted-class logit drop after zero masking the highest-CAM 2% of input positions available within each region"}, "code": "scripts/analysis/analyze_long_input_regions.py", "git_revision": git_sha(Path(__file__).resolve().parents[2])}
+    if not args.analysis_only: render(metrics, selected, output / "chapter7_two_event_gradcam.png")
+    provenance = {"datasets": ["doublet@v1", "particles2snr-f-dual-clean-c1-yolo-3class@v1"], "inputs": {"checkpoint_sha256": sha256(checkpoint)}, "parameters": {"seed": SEED, "edge_fraction_each_side": EDGE_FRACTION, "regional_mask_budget": MASK_BUDGET, "input_length": INPUT_LENGTH}, "metric_definitions": {"cam_density_enrichment": "regional CAM mass fraction divided by regional time coverage", "target_logit_drop_top2pct": "predicted-class logit drop after zero masking the highest-CAM 2% of input positions available within each region", "selected_event_temporal_coverage": "union of detector-derived event-window samples divided by 4096", "selected_event_cam_mass": "Grad-CAM activation inside the union of detector-derived event windows divided by total Grad-CAM activation"}, "code": "scripts/analysis/analyze_long_input_regions.py", "git_revision": git_sha(Path(__file__).resolve().parents[2])}
     fingerprint = hashlib.sha256(json.dumps(provenance, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     metrics_manifest = {"schema_version": 1, "analysis_run_id": output.name, "computation_fingerprint": fingerprint, "computation_provenance": provenance, "metrics": [{"path": "metrics.json", "sha256": sha256(output / "metrics.json"), "computation_fingerprint": fingerprint}]}
     (output / "metrics_manifest.json").write_text(json.dumps(metrics_manifest, indent=2, sort_keys=True) + "\n")

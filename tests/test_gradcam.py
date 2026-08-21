@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from p0.gradcam import attention_enrichment, interval_mask, regional_top_mask, temporal_gradcam, temporal_regions, top_fraction_mask
+from p0.gradcam import attention_enrichment, event_concentration, interval_mask, regional_top_mask, temporal_gradcam, temporal_regions, top_fraction_mask
 from p0.models.conv1d_gap import Conv1DGAPClassifier
 
 
@@ -44,3 +44,12 @@ def test_regional_top_mask_uses_fixed_global_budget():
     mask = regional_top_mask(cam, region, 0.05)
     assert mask.sum() == 5
     assert np.flatnonzero(mask).tolist() == [75, 76, 77, 78, 79]
+
+
+def test_event_concentration_reports_coverage_mass_and_enrichment():
+    cam = np.ones(100)
+    cam[20:40] = 4
+    result = event_concentration(cam, [(0.2, 0.4)])
+    assert result["temporal_coverage"] == pytest.approx(0.2)
+    assert result["cam_mass"] == pytest.approx(80 / 160)
+    assert result["uniform_attention_enrichment"] == pytest.approx(2.5)
